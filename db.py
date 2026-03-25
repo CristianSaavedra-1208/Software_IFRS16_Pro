@@ -54,6 +54,17 @@ def inicializar_db():
         except sqlite3.OperationalError:
             pass # La columna ya existe
             
+    nuevas_columnas_rem = {
+        'Baja_Pasivo': 'REAL DEFAULT 0.0',
+        'Baja_ROU': 'REAL DEFAULT 0.0',
+        'P_L_Efecto': 'REAL DEFAULT 0.0'
+    }
+    for col, tipo in nuevas_columnas_rem.items():
+        try:
+            cursor.execute(f"ALTER TABLE remediciones ADD COLUMN {col} {tipo}")
+        except sqlite3.OperationalError:
+            pass
+            
     # Migración de Seguridad RBAC
     try:
         cursor.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT DEFAULT 'Administrador'")
@@ -297,10 +308,10 @@ def actualizar_contrato_remedicion(cod, can, tas, t_m, fin, p, f_rem):
     conn.commit()
     conn.close()
 
-def insertar_remedicion(cod, f_rem, can, tas, t_m, fin, p, aj_rou):
+def insertar_remedicion(cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas=0.0, b_rou=0.0, pl_efec=0.0):
     conn = conectar()
-    conn.execute("INSERT INTO remediciones (Codigo_Interno, Fecha_Remedicion, Canon, Tasa, Tasa_Mensual, Fin, Plazo, Ajuste_ROU) VALUES (?,?,?,?,?,?,?,?)", 
-                 (cod, f_rem, can, tas, t_m, fin, p, aj_rou))
+    conn.execute("INSERT INTO remediciones (Codigo_Interno, Fecha_Remedicion, Canon, Tasa, Tasa_Mensual, Fin, Plazo, Ajuste_ROU, Baja_Pasivo, Baja_ROU, P_L_Efecto) VALUES (?,?,?,?,?,?,?,?,?,?,?)", 
+                 (cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas, b_rou, pl_efec))
     conn.commit()
     conn.close()
 
@@ -312,6 +323,18 @@ def cargar_remediciones(cod=None):
         df = pd.read_sql("SELECT * FROM remediciones ORDER BY Codigo_Interno, Fecha_Remedicion ASC", conn)
     conn.close()
     return [dict(r) for _, r in df.iterrows()]
+
+def cargar_remediciones_todas_agrupadas():
+    conn = conectar()
+    df = pd.read_sql("SELECT * FROM remediciones ORDER BY Codigo_Interno, Fecha_Remedicion ASC", conn)
+    conn.close()
+    grouped = {}
+    for _, r in df.iterrows():
+        d = dict(r)
+        cod = d['Codigo_Interno']
+        if cod not in grouped: grouped[cod] = []
+        grouped[cod].append(d)
+    return grouped
 
 def limpiar_monedas():
     conn = conectar()

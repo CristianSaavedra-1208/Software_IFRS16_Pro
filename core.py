@@ -40,10 +40,11 @@ def __calc_vp(can, p, t_m, tipo, f_meses=1):
 
 import numpy as np
 
-@st.cache_data
-def motor_financiero_v20(c):
-    from db import cargar_remediciones
-    rems = cargar_remediciones(c['Codigo_Interno'])
+@st.cache_data(show_spinner=False)
+def motor_financiero_v20(c, rems=None):
+    if rems is None:
+        from db import cargar_remediciones
+        rems = cargar_remediciones(c['Codigo_Interno'])
     
     # Hito 1: Parámetros del contrato Original (antes de cualquier remedición)
     f_i = pd.to_datetime(c['Inicio'])
