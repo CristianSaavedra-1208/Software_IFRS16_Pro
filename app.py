@@ -768,10 +768,13 @@ def modulo_dashboard():
         with t2:
             if not df_res.empty:
                 numeric_cols = df_res.select_dtypes(include='number').columns
-                cols_currency = [c for c in numeric_cols if c not in ['Tasa', 'Tasa Anual %', 'Tasa_Mensual', 'Valor_Moneda_Inicio', 'Plazo', 'Cuotas Devengadas', 'Cuotas por Devengar', 'Cuotas de Pago (VA)']]
+                cols_clp = [c for c in numeric_cols if c in ['Valor Inicial ROU', 'Depreciación Ejercicio', 'ROU Bruto', 'Amort. Acum', 'ROU Neto', 'Pasivo Total', 'Pasivo Corriente', 'Pasivo No Corr']]
+                cols_canon = [c for c in numeric_cols if c in ['Canon', 'Nuevo_Canon', 'Valor_Moneda_Inicio']]
                 
-                # Format currency normally, but let standard precision apply to rates/ratios
-                styled_df = df_res.style.format(precision=0, thousands=".", subset=cols_currency)
+                # Format CLP fields as integers (precision=0)
+                styled_df = df_res.style.format(precision=0, thousands=".", subset=cols_clp)
+                # Format Canon and UF with decimals
+                styled_df = styled_df.format(precision=4, thousands=".", subset=cols_canon)
                 st.dataframe(styled_df)
                 st.download_button("Exportar Detalle (Excel)", to_excel(df_res), f"Resumen_Saldos_Detalle_{m_saved}_{a_saved}.xlsx")
 
@@ -782,9 +785,10 @@ def modulo_monedas():
     with t1:
         monedas_activas = obtener_parametros('MONEDA')
         if not monedas_activas: monedas_activas = ["UF", "CLP", "USD", "EUR"]
-        f, m, v = st.date_input("Fecha", min_value=date(1900, 1, 1), max_value=date(2100, 12, 31)), st.selectbox("Moneda", monedas_activas), st.number_input("Valor CLP")
+        f, m, v = st.date_input("Fecha", min_value=date(1900, 1, 1), max_value=date(2100, 12, 31)), st.selectbox("Moneda", monedas_activas), st.number_input("Valor Moneda", format="%.4f")
         if st.button("Guardar Moneda"): 
             insertar_moneda(f.strftime('%Y-%m-%d'), m, v)
+            st.cache_data.clear()
             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
             st.session_state.success_msg = f"Moneda {m} guardada exitosamente para la fecha {f.strftime('%Y-%m-%d')}."
             st.rerun()
@@ -800,6 +804,7 @@ def modulo_monedas():
                 try:
                     df_in_m = pd.read_excel(arch_m)
                     cargar_masivo_monedas(df_in_m)
+                    st.cache_data.clear()
                     if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
                     st.session_state.success_msg = f"Tipos de cambio cargados exitosamente. Se han cargado {len(df_in_m)} líneas."
                     st.rerun()
@@ -824,7 +829,7 @@ def modulo_contratos():
             
             monedas_activas = obtener_parametros('MONEDA')
             if not monedas_activas: monedas_activas = ["UF", "CLP", "USD", "EUR"]
-            mon, can = c2.selectbox("Moneda", monedas_activas), c2.number_input("Canon")
+            mon, can = c2.selectbox("Moneda", monedas_activas), c2.number_input("Canon", format="%.4f")
             tas = c2.number_input("Tasa Anual %", value=6.0)
             
             frecuencias_raw = obtener_parametros('FRECUENCIA_PAGO')
@@ -1043,7 +1048,7 @@ def modulo_contratos():
             with st.form("f_rem"):
                 st.write("Determine las nuevas condiciones de renovación o alteración del contrato.")
                 c1, c2, c3 = st.columns(3)
-                n_can = c1.number_input("Nuevo Canon", value=float(c_sel['Canon']))
+                n_can = c1.number_input("Nuevo Canon", value=float(c_sel['Canon']), format="%.4f")
                 n_tas = c2.number_input("Nueva Tasa Anual %", value=float(c_sel['Tasa']*100))
                 n_fin = c3.date_input("Nueva Fecha Fin", value=pd.to_datetime(c_sel['Fin']), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
                 
@@ -1772,6 +1777,8 @@ def modulo_configuracion():
         st.write("Borra todo el historial de tipos de cambio de la base de datos para cargar un nuevo archivo desde cero.")
         if st.button("🗑️ Borrar Todos los Tipos de Cambio", type="primary", key="btn_limpiar_monedas"):
             limpiar_monedas()
+            st.cache_data.clear()
+            if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
             st.success("✅ Historial de monedas eliminado por completo. Puede cargar un nuevo archivo en el módulo de Monedas.")
             
         st.markdown("---")
@@ -1779,6 +1786,8 @@ def modulo_configuracion():
         st.write("Borra toda la cartera de contratos registrados y toda su historia de remediciones (trazabilidad).")
         if st.button("🚨 Borrar Todos los Contratos Registrados", type="primary", key="btn_limpiar_contratos"):
             limpiar_contratos()
+            st.cache_data.clear()
+            if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
             st.success("✅ Base de datos de contratos vaciada. El sistema está listo para una carga masiva desde el módulo de Contratos.")
 
 def resolver_tasa_implicita(vr, ca, canon, plazo_meses, vrng, oc):
