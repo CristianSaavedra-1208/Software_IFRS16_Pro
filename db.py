@@ -37,6 +37,14 @@ def inicializar_db():
                         
     cursor.execute('''CREATE TABLE IF NOT EXISTS credenciales_erp (
                         erp_nombre TEXT PRIMARY KEY, esta_activo BOOLEAN, secretos_json TEXT)''')
+                        
+    cursor.execute('''CREATE TABLE IF NOT EXISTS bitacora_auditoria (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fecha_hora TEXT,
+                        usuario TEXT,
+                        accion TEXT,
+                        entidad_id TEXT,
+                        detalles TEXT)''')
     
     # Migraciones para agregar componentes del ROU y Remedición
     nuevas_columnas = {
@@ -288,18 +296,23 @@ def insertar_contrato(c):
     
     conn.commit()
     conn.close()
+    
+    # Audit Log
+    registrar_log("Sistema/Usuario", "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c['Inicio']}, Clase: {c['Clase_Activo']}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
 
 def dar_baja_contrato(cod, fecha):
     conn = conectar()
     conn.execute("UPDATE contratos SET Estado='Baja', Fecha_Baja=? WHERE Codigo_Interno=?", (fecha, cod))
     conn.commit()
     conn.close()
+    registrar_log("Sistema/Usuario", "BAJA_CONTRATO", cod, f"Dado de baja el {fecha}")
 
 def marcar_contrato_remedido(cod, fecha):
     conn = conectar()
     conn.execute("UPDATE contratos SET Estado='Remedido', Fecha_Baja=? WHERE Codigo_Interno=?", (fecha, cod))
     conn.commit()
     conn.close()
+    registrar_log("Sistema/Usuario", "MARCAR_REMEDIDO", cod, f"Marcado Histórico por nueva Remedición el {fecha}")
 
 def actualizar_contrato_remedicion(cod, can, tas, t_m, fin, p, f_rem):
     conn = conectar()
@@ -314,6 +327,7 @@ def insertar_remedicion(cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas=0.0, b_
                  (cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas, b_rou, pl_efec))
     conn.commit()
     conn.close()
+    registrar_log("Sistema/Usuario", "CREAR_REMEDICION", cod, f"Nueva Remedición desde {f_rem}. P/L Efectivo: {pl_efec}")
 
 def cargar_remediciones(cod=None):
     conn = conectar()
@@ -348,5 +362,37 @@ def limpiar_contratos():
     conn.execute("DELETE FROM remediciones")
     conn.commit()
     conn.close()
+
+def is_audit_enabled():
+    conn = conectar()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT valor FROM config_params WHERE tipo='AUDIT_LOG_ENABLED'")
+        row = c.fetchone()
+        conn.close()
+        return bool(row) and row['valor'] == '1'
+    except:
+        conn.close()
+        return False
+
+def registrar_log(usuario, accion, entidad_id, detalles=""):
+    if not is_audit_enabled():
+        return
+    import datetime
+    conn = conectar()
+    fh = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("INSERT INTO bitacora_auditoria (fecha_hora, usuario, accion, entidad_id, detalles) VALUES (?, ?, ?, ?, ?)",
+                 (fh, usuario, accion, str(entidad_id), str(detalles)))
+    conn.commit()
+    conn.close()
+
+def obtener_logs():
+    conn = conectar()
+    try:
+        df = pd.read_sql("SELECT * FROM bitacora_auditoria ORDER BY id DESC LIMIT 1000", conn)
+    except:
+        df = pd.DataFrame()
+    conn.close()
+    return df
 
 inicializar_db()

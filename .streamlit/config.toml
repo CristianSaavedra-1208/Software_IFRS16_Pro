@@ -3,3 +3,11 @@ toolbarMode = "viewer"
 
 [server]
 headless = true
+
+[theme]
+# Colores corporativos de Mundo
+primaryColor = "#00829B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#333333"
+font = "sans serif"

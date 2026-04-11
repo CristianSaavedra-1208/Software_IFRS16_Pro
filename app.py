@@ -8,12 +8,121 @@ from db import *
 from core import *
 st.set_page_config(page_title="Mundo 16", layout="wide")
 
+# -- INYECCIÓN AVANZADA DE ESTILOS CORPORATIVOS MUNDO --
+st.markdown("""
+<style>
+    /* Importar fuente oficial corporativa de Google Fonts (Montserrat) */
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800;900&display=swap');
+
+    html, body, [class*="css"], .stMarkdown p, .stDataFrame {
+        font-family: 'Montserrat', sans-serif !important;
+    }
+    
+    /* Encabezados gruesos estilo "El Match Perfecto" */
+    h1, h2, h3 {
+        color: #00829B !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        letter-spacing: -0.5px;
+    }
+    
+    /* Escalando los tamaños para no opacar el contenido */
+    h1 { font-size: 1.8rem !important; }
+    h2 { font-size: 1.4rem !important; }
+    h3 { font-size: 1.15rem !important; }
+    
+    /* Decoración de Títulos */
+    h1, h2 {
+        border-bottom: 5px solid #FFCE00 !important;
+        padding-bottom: 5px !important;
+        margin-bottom: 30px !important;
+        display: inline-block;
+    }
+
+    /* Botones Redondeados (Píldoras) estilo "Fibra + TV" o "Sucursal Virtual" */
+    .stButton > button {
+        border-radius: 50px !important;
+        font-weight: 700 !important;
+        padding: 0.5rem 2rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stButton > button[kind="primary"] {
+        background-color: #00829B !important;
+        color: white !important;
+        border: none !important;
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        background-color: #00607A !important;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 15px rgba(0, 130, 155, 0.4) !important;
+    }
+
+    /* Estilización de las Pestañas (Tabs) como Toggles estilo "2 MUNDO / 1 MUNDO" */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #FFFFFF;
+        border-radius: 50px;
+        padding: 5px;
+        gap: 5px;
+        display: inline-flex;
+        border: 2px solid #EBEBEB;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.03);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 50px !important;
+        padding: 6px 16px !important;
+        font-size: 0.85rem !important;
+        font-weight: 800 !important;
+        border: none !important;
+        background-color: transparent !important;
+        color: #B0B0B0 !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: #00829B !important;
+        color: #FFFFFF !important;
+        box-shadow: 0 4px 12px rgba(0, 130, 155, 0.3) !important;
+    }
+
+    /* Ocultar barra inferior nativa de selección de Streamlit Tab */
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+
+    /* Simulación de Top Bar (Banner Oscuro) */
+    header[data-testid="stHeader"] {
+        border-top: 15px solid #00607A !important;
+    }
+    
+    header[data-testid="stHeader"]::after {
+        content: "";
+        display: block;
+        height: 6px;
+        width: 100%;
+        background-color: #FFCE00;
+    }
+    
+    /* Contenedores con efecto Tarjeta (Cards) */
+    [data-testid="stVerticalBlock"] [data-testid="stVerticalBlock"] {
+        background-color: #FFFFFF;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+        border: 1px solid #F0F0F0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 if 'success_msg' in st.session_state:
     st.success(st.session_state.success_msg)
     del st.session_state.success_msg
 
-# --- KILL SWITCH (Miércoles 15 Abril 2026) ---
-FECHA_EXPIRACION = date(2026, 4, 15)
+# --- KILL SWITCH (Domingo 31 Mayo 2026) ---
+FECHA_EXPIRACION = date(2026, 5, 31)
 is_local = False
 try:
     host = st.context.headers.get("Host", "")
@@ -197,8 +306,7 @@ def modulo_asientos():
     
             # Verificar si hubo una Terminación Parcial (Reducción) en el mismo mes que anule la Baja Natural
             paso_terminacion_parcial = False
-            from db import cargar_remediciones
-            rems = cargar_remediciones(c['Codigo_Interno'])
+            rems = rems_grupos.get(c['Codigo_Interno'], [])
             for r in rems:
                 f_r = pd.to_datetime(r['Fecha_Remedicion'])
                 if f_r.month == m_idx and f_r.year == a and r.get('Baja_Pasivo', 0.0) > 0:
@@ -232,8 +340,7 @@ def modulo_asientos():
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *cta_map['Perdida'], abs(dif_baja), 0)
 
             # Asiento de Ajuste por Remedición
-            from db import cargar_remediciones
-            rems = cargar_remediciones(c['Codigo_Interno'])
+            rems = rems_grupos.get(c['Codigo_Interno'], [])
             for r in rems:
                 f_r = pd.to_datetime(r['Fecha_Remedicion'])
                 if f_r.month == m_idx and f_r.year == a:
@@ -330,13 +437,75 @@ def modulo_asientos():
                             creds = leer_credencial_erp(erp_act)['secretos']
                             
                             if erp_act == "Odoo":
-                                # import xmlrpc.client
-                                # url, db, user, pwd = creds['url'], creds['db'], creds['user'], creds['pass']
-                                # common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))
-                                # uid = common.authenticate(db, user, pwd, {})
-                                # models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
-                                # models.execute_kw(db, uid, pwd, 'account.move', 'create', [ payload_dict ])
-                                st.warning("⚠️ Pendiente IT: Inserte el script XML-RPC de Odoo usando las credenciales cargadas.")
+                                import xmlrpc.client
+                                url, db, user, pwd = creds['url'], creds['db'], creds['user'], creds['pass']
+                                
+                                # Filtrar fila de totales
+                                df_send = df_resumen[df_resumen['Empresa'] != 'TOTALES']
+                                
+                                line_ids = []
+                                for _, row in df_send.iterrows():
+                                    cuenta = str(row['N° Cuenta']).strip()
+                                    debe = float(row['Debe']) if 'Debe' in row else 0.0
+                                    haber = float(row['Haber']) if 'Haber' in row else 0.0
+                                    nombre_cta = str(row['Cuenta']).strip()
+                                    
+                                    if debe == 0.0 and haber == 0.0:
+                                        continue
+                                        
+                                    line_ids.append((0, 0, {
+                                        'name': f"{row['Transacción']} - {nombre_cta}",
+                                        'debit': debe,
+                                        'credit': haber,
+                                        '_codigo_cta': cuenta
+                                    }))
+                                
+                                try:
+                                    common = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/common')
+                                    uid = common.authenticate(db, user, pwd, {})
+                                    if not uid:
+                                        st.error("❌ Falló la autenticación con Odoo. Revise las credenciales en 'Configuración'.")
+                                    else:
+                                        models = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/object')
+                                        
+                                        # Buscar el Diario por defecto (Misceláneos)
+                                        j_ids = models.execute_kw(db, uid, pwd, 'account.journal', 'search', [[['type', '=', 'general']]], {'limit': 1})
+                                        journal_id = j_ids[0] if j_ids else False
+                                        
+                                        # Resolver IDs de cuentas según el código para evitar errores relacionales
+                                        codigos = list(set([l[2]['_codigo_cta'] for l in line_ids]))
+                                        cuentas_odoo = models.execute_kw(db, uid, pwd, 'account.account', 'search_read', 
+                                            [[['code', 'in', codigos]]], {'fields': ['id', 'code']})
+                                        mapa_cuentas = {c['code']: c['id'] for c in cuentas_odoo}
+                                        
+                                        falta_cuenta = False
+                                        for l in line_ids:
+                                            cod = l[2].pop('_codigo_cta')
+                                            acc_id = mapa_cuentas.get(cod)
+                                            if acc_id:
+                                                l[2]['account_id'] = acc_id
+                                            else:
+                                                st.warning(f"⚠️ La cuenta '{cod}' no existe en el plan de cuentas de Odoo.")
+                                                falta_cuenta = True
+                                        
+                                        if not falta_cuenta:
+                                            # Payload maestro del asiento
+                                            move_vals = {
+                                                'ref': f"IFRS 16 - {m_saved} {a_saved}",
+                                                'date': pd.to_datetime(f"{a_saved}-{MESES_LISTA.index(m_saved)+1}-01") + relativedelta(day=31),
+                                                'journal_id': journal_id,
+                                                'line_ids': line_ids
+                                            }
+                                            
+                                            # Formatear fecha para el JSON de Odoo (string)
+                                            move_vals['date'] = move_vals['date'].strftime('%Y-%m-%d')
+                                            
+                                            # Crear Asiento Borrador
+                                            move_id = models.execute_kw(db, uid, pwd, 'account.move', 'create', [move_vals])
+                                            st.success(f"✅ ¡Éxito! Asiento preliminar (Borrador) creado en Odoo. (ID Asiento: {move_id})")
+                                            
+                                except Exception as e:
+                                    st.error(f"❌ Ocurrió un error al enviar información a Odoo: {str(e)}")
                                 
                             elif erp_act == "SAP ERP (OData/BAPI)":
                                 # import requests
@@ -497,8 +666,8 @@ def modulo_notas():
                 
             fin_orig = (pd.to_datetime(c['Inicio']) + pd.DateOffset(months=int(c['Plazo']))).strftime('%Y-%m-%d')
                     
-            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés": interes, "Dif. Cambio": reajuste, "Pagos": pagos, "Bajas": bajas_p, "S.Final": s_fin_real})
-            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Amortización": amortizacion, "Dif. Cambio": reajuste_rou, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
+            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés devengado": interes, "Dif. Cambio": reajuste, "Pagos de capital": -(pagos - interes), "Pago de intereses": -interes, "Bajas": bajas_p, "S.Final": s_fin_real})
+            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Amortización": -amortizacion, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
         
         st.session_state.roll_pasivo = roll_pasivo
         st.session_state.roll_activo = roll_activo
@@ -510,23 +679,28 @@ def modulo_notas():
         m_saved = st.session_state.roll_params['m']
         a_saved = st.session_state.roll_params['a']
         
-        t1, t2 = st.tabs(["Movimiento de saldos Consolidado por Clase", "Detalle por Contrato individual"])
+        t1, t2 = st.tabs(["Movimiento de saldos por Clase", "Detalle por Contrato individual"])
         
         with t1:
-            st.subheader("Movimiento de saldos Consolidado (Vertical) - Pasivos")
+            st.subheader("Movimiento de saldos (Horizontal) - Pasivos")
             if roll_pasivo:
                 df_pas = pd.DataFrame(roll_pasivo)
-                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés', 'Dif. Cambio', 'Pagos', 'Bajas', 'S.Final']
-                res_pasivo = df_pas.groupby('Clase_Activo')[cols_p_sum].sum().T
-                res_pasivo['TOTAL PASIVO'] = res_pasivo.sum(axis=1)
-                st.dataframe(res_pasivo.style.format(precision=0, thousands="."))
+                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés devengado', 'Dif. Cambio', 'Pagos de capital', 'Pago de intereses', 'Bajas', 'S.Final']
+                res_pasivo = df_pas.groupby('Clase_Activo')[cols_p_sum].sum()
+                res_pasivo.loc['TOTAL PASIVO'] = res_pasivo.sum()
                 
-                st.subheader("Movimiento de saldos Consolidado (Vertical) - Activos ROU")
+                # Apply smaller font size style if necessary
+                styled_pas = res_pasivo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
+                st.dataframe(styled_pas, use_container_width=True)
+                
+                st.subheader("Movimiento de saldos (Horizontal) - Activos ROU")
                 df_act = pd.DataFrame(roll_activo)
-                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Amortización', 'Dif. Cambio', 'Bajas', 'S.Final']
-                res_activo = df_act.groupby('Clase_Activo')[cols_a_sum].sum().T
-                res_activo['TOTAL ACTIVO'] = res_activo.sum(axis=1)
-                st.dataframe(res_activo.style.format(precision=0, thousands="."))
+                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Amortización', 'Bajas', 'S.Final']
+                res_activo = df_act.groupby('Clase_Activo')[cols_a_sum].sum()
+                res_activo.loc['TOTAL ACTIVO'] = res_activo.sum()
+                
+                styled_act = res_activo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
+                st.dataframe(styled_act, use_container_width=True)
                 
             else:
                 st.info("No hay datos")
@@ -617,12 +791,10 @@ def modulo_dashboard():
                     v12 = v_act - v_cor_sum 
                     
                     tc_ini = float(c['Valor_Moneda_Inicio']) if float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    
-                    # ROU Bruto Original
                     rou_bruto = rou * tc_ini
                     
-                    from db import cargar_remediciones
-                    rems = cargar_remediciones(c['Codigo_Interno'])
+                    # Using the preloaded rems_grupos cache to prevent N+1 queries
+                    rems = rems_grupos.get(c['Codigo_Interno'], [])
                     
                     n_can, n_tas, n_plaz, n_fin, n_rou = None, None, None, None, None
                     if rems:
@@ -743,7 +915,7 @@ def modulo_dashboard():
         m_saved = st.session_state.dash_params['m']
         a_saved = st.session_state.dash_params['a']
         
-        t1, t2 = st.tabs(["Resumen Consolidado", "Detalle por Contrato"])
+        t1, t2 = st.tabs(["Resumen", "Detalle por Contrato"])
         
         with t1:
             if not df_res.empty:
@@ -761,7 +933,7 @@ def modulo_dashboard():
                     df_grp = df_grp.drop(columns=['Valor Inicial ROU'])
 
                 st.dataframe(df_grp.style.format(precision=0, thousands="."))
-                st.download_button("Exportar Resumen Consolidado (Excel)", to_excel(df_grp), f"Resumen_Saldos_{m_saved}_{a_saved}.xlsx")
+                st.download_button("Exportar Resumen (Excel)", to_excel(df_grp), f"Resumen_Saldos_{m_saved}_{a_saved}.xlsx")
             else:
                 st.info("No hay datos para esta selección.")
                 
@@ -780,6 +952,16 @@ def modulo_dashboard():
 
 def modulo_monedas():
     st.header("💱 Monedas")
+    st.warning("⚠️ Importante: Los valores de las monedas no pueden exceder los 4 decimales.")
+    
+    if "Lector" in st.session_state.rol:
+        st.info("Rol Lector: Solo puedes visualizar los tipos de cambio.")
+        t_unica = st.tabs(["Ver Todos los Datos"])[0]
+        with t_unica:
+            st.subheader("Histórico Completo de Tipos de Cambio")
+            st.dataframe(cargar_monedas(), use_container_width=True)
+        return
+        
     t1, t2, t3 = st.tabs(["Carga Manual", "Carga Masiva", "Ver Todos los Datos"])
     
     with t1:
@@ -817,6 +999,49 @@ def modulo_monedas():
 
 def modulo_contratos():
     st.header("📝 Contratos")
+    
+    if "Lector" in st.session_state.rol:
+        st.info("Rol Lector: Solo puedes visualizar los contratos existentes.")
+        t_unica = st.tabs(["Ver Todos los Datos"])[0]
+        with t_unica:
+            st.subheader("Base de Datos Completa: Contratos")
+            lista_c = cargar_contratos()
+            from db import cargar_remediciones_todas_agrupadas
+            rems_grupos = cargar_remediciones_todas_agrupadas()
+            for c in lista_c:
+                c['Fin_Original'] = (pd.to_datetime(c['Inicio']) + pd.DateOffset(months=int(c['Plazo']))).strftime('%Y-%m-%d')
+                rems = rems_grupos.get(c['Codigo_Interno'], [])
+                if rems:
+                    last_rem = rems[-1]
+                    c['Nuevo_Canon'] = last_rem['Canon']
+                    c['Nueva_Tasa_Anual_%'] = last_rem['Tasa'] * 100
+                    c['Nuevo_Plazo'] = last_rem['Plazo']
+                    c['Nuevo_Fin'] = last_rem['Fin']
+                else:
+                    c['Nuevo_Canon'] = None
+                    c['Nueva_Tasa_Anual_%'] = None
+                    c['Nuevo_Plazo'] = None
+                    c['Nuevo_Fin'] = None
+                    
+            df_contratos = pd.DataFrame(lista_c)
+            if not df_contratos.empty:
+                ahoy = date.today()
+                df_contratos.insert(1, "Estado Vigencia", df_contratos['Fin'].apply(
+                    lambda x: '🚨 Vencido' if pd.to_datetime(x).date() < ahoy else '🟢 Vigente'
+                ))
+                columnas_base = ['Codigo_Interno', 'Empresa', 'Clase_Activo', 'ID', 'Proveedor', 'Nombre', 'Moneda', 'Canon', 'Tasa', 'Tasa_Mensual', 'Valor_Moneda_Inicio', 'Plazo', 'Inicio', 'Fin', 'Fin_Original', 'Estado', 'Fecha_Baja', 'Ajuste_ROU', 'Tipo_Pago', 'Fecha_Remedicion', 'Frecuencia_Pago']
+                permitidas = ['Estado Vigencia'] + columnas_base + obtener_parametros('CAMPO_EXTRA') + ['Nuevo_Canon', 'Nueva_Tasa_Anual_%', 'Nuevo_Plazo', 'Nuevo_Fin']
+                cols_to_keep = [col for col in permitidas if col in df_contratos.columns]
+                
+                df_display = df_contratos[cols_to_keep]
+                if 'Tasa' in df_display.columns:
+                    df_display = df_display.rename(columns={'Tasa': 'Tasa Anual %'})
+                st.dataframe(df_display, use_container_width=True)
+                st.download_button("Exportar Contratos (Excel)", to_excel(df_display), "Base_Contratos_Completa.xlsx")
+            else:
+                st.info("No hay contratos cargados.")
+        return
+        
     t1, t2, t3, t4, t5, t6 = st.tabs(["Ingreso de Contrato Manual", "Ingreso de Contrato Masiva", "Ver Todos los Datos", "Modificación Individual", "Baja Anticipada", "Modificación Masiva"])
     
     with t1:
@@ -958,8 +1183,10 @@ def modulo_contratos():
                             st.warning(e)
                     else:
                         # 2. Inserción Segura
+                        import time
+                        t_ini_carga = time.time()
                         for _, r in df_in.iterrows():
-                            emp = str(r['Empresa'])
+                            emp = str(r['Empresa']).strip()
                             f_i = pd.to_datetime(r['Inicio'])
                             f_f = pd.to_datetime(r['Fin'])
                             diff = relativedelta(f_f, f_i)
@@ -989,19 +1216,22 @@ def modulo_contratos():
                                 nuevo_masivo[cx] = str(r[cx]) if cx in r and pd.notna(r[cx]) else ''
                                 
                             insertar_contrato(nuevo_masivo)
-                            contratos_existentes.append({"Empresa": emp}) # Trick for correlation code
+                            contratos_existentes.append(nuevo_masivo) # Corrección de trick para número de correlativo
                         if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                        t_fin_carga = time.time()
                         st.success(f"✅ **Contratos validados y cargados exitosamente**. Se han ingresado {len(df_in)} nuevas líneas al sistema.")
+                        st.info(f"⏱️ Tiempo total de procesamiento y carga: {t_fin_carga - t_ini_carga:.2f} segundos.")
                 except Exception as e:
                     st.error(f"Error procesando archivo: {e}")
 
     with t3:
         st.subheader("Base de Datos Completa: Contratos")
         lista_c = cargar_contratos()
-        from db import cargar_remediciones
+        from db import cargar_remediciones_todas_agrupadas
+        rems_grupos = cargar_remediciones_todas_agrupadas()
         for c in lista_c:
             c['Fin_Original'] = (pd.to_datetime(c['Inicio']) + pd.DateOffset(months=int(c['Plazo']))).strftime('%Y-%m-%d')
-            rems = cargar_remediciones(c['Codigo_Interno'])
+            rems = rems_grupos.get(c['Codigo_Interno'], [])
             if rems:
                 last_rem = rems[-1]
                 c['Nuevo_Canon'] = last_rem['Canon']
@@ -1286,6 +1516,11 @@ def modulo_vencimientos():
         es_desc = btn_desc
         f_t = pd.to_datetime(date(a, MESES_LISTA.index(m_nom)+1, 1)) + relativedelta(day=31)
         res = []
+        
+        # PRECARGAR REMEDICIONES PARA EVITAR QUERY N+1 (Pasa de 80s a <1s)
+        from db import cargar_remediciones_todas_agrupadas
+        rems_grupos = cargar_remediciones_todas_agrupadas()
+        
         for _, c in df_c.iterrows():
             if emp_sel != "Todas" and c['Empresa'] != emp_sel: continue
             if f_t < pd.to_datetime(c['Inicio']).replace(day=1): continue
@@ -1295,7 +1530,7 @@ def modulo_vencimientos():
                 f_baja = pd.to_datetime(c['Fecha_Baja'])
                 if f_baja <= f_t: continue
                 
-            tab, _, _ = obtener_motor_financiero(c)
+            tab, _, _ = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
             if tab.empty or 'Fecha' not in tab.columns: continue
             # Solo los flujos estrictamente futuros al cierre
             futuros = tab[tab['Fecha'] > f_t]
@@ -1388,10 +1623,10 @@ def modulo_vencimientos():
             
         todas_cols = ['90 días', '90 días a 1 año', 'Total Corriente', '2 a 3 años', '4 a 7 años', 'Más de 7 años', 'Total No Corriente']
         
-        t1, t2 = st.tabs(["Consolidado por Clase", "Detalle por Contrato individual"])
+        t1, t2 = st.tabs(["Por Clase", "Detalle por Contrato individual"])
         
         with t1:
-            st.subheader(f"Pasivos {tipo_lbl} (Consolidado)")
+            st.subheader(f"Pasivos {tipo_lbl}")
             piv = df_res.groupby(['Clase_Activo', 'Bucket', 'Orden'])['Monto'].sum().unstack(['Bucket', 'Orden']).fillna(0)
             piv.columns = [col[0] for col in piv.columns.to_flat_index()]
             
@@ -1406,7 +1641,7 @@ def modulo_vencimientos():
             
             st.write(f"**Detalle al {f_t_saved.strftime('%d-%m-%Y')} (En M$)**")
             st.dataframe(piv.style.format(precision=0, thousands="."))
-            st.download_button("Exportar Consolidado (Excel)", to_excel(piv), f"Nota_Venc_Consolidado_{m_saved}_{a_saved}.xlsx")
+            st.download_button("Exportar Formato (Excel)", to_excel(piv), f"Nota_Vencimientos_{m_saved}_{a_saved}.xlsx")
     
         with t2:
             st.subheader(f"Pasivos {tipo_lbl} (Detallado)")
@@ -1548,7 +1783,7 @@ def modulo_configuracion():
             _render_integracion_erp()
         return
         
-    opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Mantenimiento BD"]
+    opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Bitácora de Auditoría", "Mantenimiento BD"]
     sel_tab = st.radio("Sección de Configuración", opciones, horizontal=True, key="config_tabs_radio")
     
     if sel_tab == "Usuarios":
@@ -1767,6 +2002,36 @@ def modulo_configuracion():
 
     elif sel_tab == "Integraciones ERP":
         _render_integracion_erp()
+
+    elif sel_tab == "Bitácora de Auditoría":
+        st.subheader("Bitácora de Auditoría (Logs del Sistema)")
+        st.info("Registre y trace todas las acciones operativas realizadas por los usuarios (creación/eliminación de contratos, modificaciones, etc).")
+        
+        c_tog, c_btn = st.columns([3, 1])
+        estado_actual = is_audit_enabled()
+        
+        with c_tog:
+            nuevo_estado = st.toggle("Activar Registro Automático de Acciones (Auditoría)", value=estado_actual)
+            
+        if nuevo_estado != estado_actual:
+            if nuevo_estado:
+                agregar_parametro('AUDIT_LOG_ENABLED', '1')
+                st.session_state.success_msg = "Bitácora de Auditoría ACTIVADA. Todas las alteraciones en Contratos y Parámetros quedarán registradas."
+            else:
+                eliminar_parametro('AUDIT_LOG_ENABLED', '1')
+                st.session_state.success_msg = "Bitácora DESACTIVADA."
+            st.rerun()
+            
+        st.markdown("---")
+        if c_btn.button("🔄 Refrescar Visor de Logs", type="primary", use_container_width=True):
+            st.rerun()
+            
+        logs_df = obtener_logs()
+        if logs_df.empty:
+            st.warning("No hay registros en la Bitácora actualmente.")
+        else:
+            logs_df.rename(columns={'id':'ID_Log', 'fecha_hora':'Fecha/Hora', 'usuario':'Usuario', 'accion': 'Acción Ejecutada', 'entidad_id': 'Contrato / Entidad', 'detalles':'Detalle Extra'}, inplace=True)
+            st.dataframe(logs_df, use_container_width=True)
 
     elif sel_tab == "Mantenimiento BD":
         st.subheader("Mantenimiento y Reseteo de Datos")
@@ -2287,7 +2552,26 @@ def modulo_asistente_ibr():
 def main():
     inicializar_db() # Garantizar que la BD exista al iniciar
     if not st.session_state.auth:
-        st.title("🔐 Login Mundo 16")
+        html_login = """
+        <div style="display: flex; flex-direction: column; align-items: flex-start; justify-content: center; margin-bottom: 25px; margin-top: 15px;">
+            <div style="display: flex; align-items: baseline; font-family: 'Montserrat', sans-serif;">
+                <span style="font-size: 1.6rem; margin-right: 8px;">🔐</span>
+                <span style="color: #00829B; font-weight: 500; font-size: 1.4rem; letter-spacing: 2px; margin-right: 18px;">LOGIN</span>
+                <span style="color: #00829B; font-weight: 900; font-size: 2.4rem; letter-spacing: -2px;">mund</span>
+                <div style="position: relative; display: inline-block; margin-left: 2px; top: 1px;">
+                    <div style="box-sizing: content-box; width: 13px; height: 13px; border: 6px solid #00829B; border-radius: 50%; background-color: #FFCE00; display: inline-block;"></div>
+                    <div style="position: absolute; top: -5px; left: -5px; width: 7px; height: 7px; background-color: #FF8A00; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: -11px; right: 0px; width: 5px; height: 5px; background-color: #E6007E; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: -2px; right: -6px; width: 4px; height: 4px; background-color: #8C2482; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: 9px; right: -10px; width: 7px; height: 7px; background-color: #E3000F; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: 20px; right: -5px; width: 6px; height: 6px; background-color: #00B4E6; border-radius: 50%;"></div>
+                </div>
+                <span style="color: #00829B; font-weight: 900; font-size: 2.4rem; margin-left: 10px; letter-spacing: -2px;">16</span>
+            </div>
+            <div style="width: 100%; max-width: 380px; height: 3px; background-color: #FFCE00; border-radius: 10px; margin-top: 8px;"></div>
+        </div>
+        """
+        st.markdown(html_login, unsafe_allow_html=True)
         u = st.text_input("Usuario", "admin")
         p = st.text_input("Contraseña", type="password")
         if st.button("Entrar"):
@@ -2300,7 +2584,32 @@ def main():
             else:
                 st.error("❌ Credenciales incorrectas")
     else:
-        st.sidebar.title("🌍 Mundo 16")
+        import time
+        t0 = time.time()
+        col_espacio, col_reloj = st.columns([8, 2])
+        with col_reloj:
+            reloj_ui = st.empty()
+            
+        html_logo = """
+        <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 20px;">
+            <div style="display: flex; align-items: baseline; font-family: 'Montserrat', sans-serif;">
+                <span style="color: #00829B; font-weight: 900; font-size: 2.8rem; letter-spacing: -2px;">mund</span>
+                <div style="position: relative; display: inline-block; margin-left: 2px; top: 2px;">
+                    <div style="box-sizing: content-box; width: 15px; height: 15px; border: 8px solid #00829B; border-radius: 50%; background-color: #FFCE00; display: inline-block;"></div>
+                    <div style="position: absolute; top: -6px; left: -6px; width: 8px; height: 8px; background-color: #FF8A00; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: -14px; right: 0px; width: 6px; height: 6px; background-color: #E6007E; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: -2px; right: -8px; width: 5px; height: 5px; background-color: #8C2482; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: 10px; right: -12px; width: 9px; height: 9px; background-color: #E3000F; border-radius: 50%;"></div>
+                    <div style="position: absolute; top: 22px; right: -6px; width: 8px; height: 8px; background-color: #00B4E6; border-radius: 50%;"></div>
+                </div>
+                <span style="color: #00829B; font-weight: 900; font-size: 2.8rem; margin-left: 12px; letter-spacing: -2px;">16</span>
+            </div>
+            <div style="color: #00829B; font-size: 0.6rem; font-weight: 800; letter-spacing: 2px; margin-top: -5px; padding-left: 5px; font-family: 'Montserrat', sans-serif;">
+                FIBRA | MÓVIL | TV | FIJO
+            </div>
+        </div>
+        """
+        st.sidebar.markdown(html_logo, unsafe_allow_html=True)
         st.sidebar.markdown("---")
         
         rol_actual = st.session_state.get('rol', 'Lector')
@@ -2317,7 +2626,7 @@ def main():
         elif rol_actual == 'Analista Financiero (Editor)':
             opciones_menu = [m for m in menus_todas if m not in ['Configuración', 'Auditoría']]
         elif rol_actual == 'Auditor Ext. / Gerencia (Lector)':
-            opciones_menu = ["Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría"]
+            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)"]
         elif rol_actual == 'Ingeniero IT (Técnico)':
             opciones_menu = ["Configuración"]
         else:
@@ -2333,5 +2642,8 @@ def main():
         elif op == "Auditoría": modulo_auditoria()
         elif op == "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)": modulo_asistente_ibr()
         elif op == "Configuración": modulo_configuracion()
+        
+        t1 = time.time()
+        reloj_ui.markdown(f"<div style='text-align: right; color: gray; font-size: 0.9em; margin-top: -40px;'>⏱️ Tiempo de ejecución: {t1 - t0:.2f} s</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__": main()

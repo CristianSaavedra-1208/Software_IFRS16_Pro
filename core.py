@@ -232,8 +232,19 @@ def motor_financiero_v20(c, rems=None):
     return final_df, vp_orig, rou_orig
 
 def generar_codigo_correlativo(empresa, lista_existente):
-    prefix = empresa[:3].upper()
-    count = len([c for c in lista_existente if c['Empresa'] == empresa]) + 1
+    prefix = str(empresa).strip()[:3].upper()
+    max_num = 0
+    pattern = f"CNT-{prefix}-"
+    
+    for c in lista_existente:
+        cod = c.get('Codigo_Interno', '')
+        if cod.startswith(pattern):
+            try:
+                num = int(cod.split('-')[-1])
+                if num > max_num: max_num = num
+            except: pass
+            
+    count = max_num + 1
     return f"CNT-{prefix}-{count:04d}"
 
 def to_excel(df):
