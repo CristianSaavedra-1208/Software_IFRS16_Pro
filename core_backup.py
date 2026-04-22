@@ -7,23 +7,14 @@ def obtener_df_monedas_cache():
     from db import cargar_monedas
     return cargar_monedas()
 
-from functools import lru_cache
-
-@lru_cache(maxsize=4096)
-def _obtener_tc_cache_interno(moneda, f_s):
+def obtener_tc_cache(moneda, fecha):
     if moneda == "CLP": return 1.0
     df = obtener_df_monedas_cache()
     if df.empty: return 0.0
     try:
-        res = df[(df['moneda'] == moneda) & (df['fecha'] <= f_s)]
-        return float(res.iloc[0]['valor']) if not res.empty else 0.0
-    except: return 0.0
-
-def obtener_tc_cache(moneda, fecha):
-    if moneda == "CLP": return 1.0
-    try:
         f_s = pd.to_datetime(fecha).strftime('%Y-%m-%d')
-        return _obtener_tc_cache_interno(moneda, f_s)
+        res = df[(df['moneda'] == moneda) & (df['fecha'] <= f_s)]
+        return res.iloc[0]['valor'] if not res.empty else 0.0
     except: return 0.0
 
 def __calc_vp(can, p, t_m, tipo, f_meses=1):
