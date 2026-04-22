@@ -189,6 +189,13 @@ def modulo_asientos():
         
         if emp_sel != "Todas": lista_c = [c for c in lista_c if c['Empresa'] == emp_sel]
         
+        from db import obtener_parametros
+        cta_amort_default = obtener_parametros('CUENTA_GASTO_AMORT_NUM')[0] if obtener_parametros('CUENTA_GASTO_AMORT_NUM') else '4101'
+        mapa_amort_clases = {}
+        for cls in obtener_parametros('CLASE_ACTIVO'):
+            c_k_num = f"CUENTA_GASTO_AMORT_NUM_{cls.upper()}"
+            mapa_amort_clases[cls] = obtener_parametros(c_k_num)[0] if len(obtener_parametros(c_k_num)) > 0 and obtener_parametros(c_k_num)[0].strip() else cta_amort_default
+            
         cta_map = {
             'ROU': (obtener_parametros('CUENTA_ROU_NUM')[0] if obtener_parametros('CUENTA_ROU_NUM') else '1401', obtener_parametros('CUENTA_ROU_NOM')[0] if obtener_parametros('CUENTA_ROU_NOM') else 'Activo ROU'),
             'Pasivo': (obtener_parametros('CUENTA_PASIVO_NUM')[0] if obtener_parametros('CUENTA_PASIVO_NUM') else '2101', obtener_parametros('CUENTA_PASIVO_NOM')[0] if obtener_parametros('CUENTA_PASIVO_NOM') else 'Pasivo IFRS 16'),
@@ -237,8 +244,11 @@ def modulo_asientos():
                 ratio_ant = tc_ant
                 
                 t_amo = "2. Amortización"
-                # ROU es activo no monetario a costo histórico (NIC 21). Su amortización se ancla irrevocablemente al TC inicial.
-                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *cta_map['Amort'], it['Dep_Orig'] * tc_ini, 0)
+                # ROU es activo no monetario a costo histórico (NIC 21). Apertura por Clase_Activo.
+                c_cls = c.get('Clase_Activo', 'Otros')
+                num_cta = mapa_amort_clases.get(c_cls, cta_map['Amort'][0])
+                cta_amort_clase = (num_cta, f"{cta_map['Amort'][1]} - {c_cls}")
+                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *cta_amort_clase, it['Dep_Orig'] * tc_ini, 0)
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *cta_map['AmortAcum'], 0, it['Dep_Orig'] * tc_ini)
                 
                 t_pag = "3. Pago de Arriendo ROU"
@@ -249,15 +259,7 @@ def modulo_asientos():
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_int, *cta_map['Interes'], it['Int_Orig'] * ratio_act, 0)
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_int, *cta_map['Pasivo'], 0, it['Int_Orig'] * ratio_act)
                 
-                t_tc = "5. Diferencia de Cambio"
-                reajuste = (it['S_Fin_Orig'] * ratio_act) - (it['S_Fin_Orig'] * ratio_ant)
-                if abs(reajuste) > 0.1:
-                    if reajuste > 0: 
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Perdida'], reajuste, 0)
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Pasivo'], 0, reajuste)
-                    else:
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Pasivo'], abs(reajuste), 0)
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Ganancia'], 0, abs(reajuste))
+                # Diferencia de Cambio calculada al final del proceso mensual para asegurar cuadratura perfecta.
     
             # Asiento de Baja Definitiva o Remedición Manual
             paso_baja_manual = False
@@ -385,6 +387,46 @@ def modulo_asientos():
                         elif aj < 0:
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_rem, *cta_map['Pasivo'], abs(aj), 0)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_rem, *cta_map['ROU'], 0, abs(aj))
+
+            # --- LÓGICA DE AUDITORÍA: CUADRATURA PERFECTA (FX PLUG) ---
+            if not fila.empty:
+                # 1. Target al final del mes
+                target_balance = it['S_Fin_Orig'] * ratio_act
+                
+                # Excepción: Si el contrato fue dado de baja este mes
+                if (c.get('Fecha_Baja') and c['Estado'] == 'Baja' and pd.to_datetime(c['Fecha_Baja']).month == m_idx and pd.to_datetime(c['Fecha_Baja']).year == a):
+                    target_balance = 0.0
+                elif not paso_baja_manual and not paso_terminacion_parcial and c['Estado'] == 'Activo':
+                    f_fin_c = pd.to_datetime(c['Fin'])
+                    if f_fin_c.month == m_idx and f_fin_c.year == a:
+                        target_balance = 0.0
+                
+                # 2. Target al inicio del mes
+                if it['Mes'] == 1:
+                    last_target_balance = 0.0
+                else:
+                    past_ant = tab[tab['Fecha'] <= f_ant]
+                    last_uf = past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0.0
+                    last_target_balance = last_uf * tc_ant
+                
+                # 3. Flujo registrado este mes para este contrato en la cuenta de Pasivo
+                flujo_pasivo_mes = 0.0
+                pasivo_cta_num = str(cta_map['Pasivo'][0]).strip()
+                for d in detalles:
+                    if d['Empresa'] == c['Empresa'] and d['Cod1'] == c['Codigo_Interno'] and str(d['N° Cuenta']).strip() == pasivo_cta_num:
+                        flujo_pasivo_mes += (d['Haber'] - d['Debe'])
+                
+                saldo_libro = last_target_balance + flujo_pasivo_mes
+                reajuste = target_balance - saldo_libro
+                
+                if abs(reajuste) > 1.0:
+                    t_tc = "5. Diferencia de Cambio"
+                    if reajuste > 0: 
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Perdida'], reajuste, 0)
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Pasivo'], 0, reajuste)
+                    else:
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Pasivo'], abs(reajuste), 0)
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *cta_map['Ganancia'], 0, abs(reajuste))
 
         st.session_state.asientos_data = detalles
         st.session_state.asientos_params = {'m': m_nom, 'a': a}
@@ -1982,6 +2024,7 @@ def modulo_configuracion():
         with st.form("fc_cuentas"):
             n_vals = []
             st.write("Ingrese el N° de Cuenta y Nombre de Cuenta para cada tipo.")
+            clases_activas = obtener_parametros('CLASE_ACTIVO')
             for k, label_default in clist:
                 col1, col2 = st.columns([1, 4])
                 v_num_act = obtener_parametros(k + '_NUM')[0] if obtener_parametros(k + '_NUM') else "0000"
@@ -1990,6 +2033,16 @@ def modulo_configuracion():
                 n_nom = col2.text_input(label_default, value=v_nom_act, key=k+'_NOM')
                 n_vals.append((k + '_NUM', n_num))
                 n_vals.append((k + '_NOM', n_nom))
+                
+                if k == 'CUENTA_GASTO_AMORT':
+                    st.caption("↳ Sub-cuentas de Amortización por Clase de Activo (Opcional - Para ERP)")
+                    for cls in clases_activas:
+                        c_k_num = f"{k}_NUM_{cls.upper()}"
+                        v_sub_num = obtener_parametros(c_k_num)[0] if len(obtener_parametros(c_k_num)) > 0 else v_num_act
+                        cA, cB = st.columns([1, 4])
+                        sub_num = cA.text_input("N° Cuenta", value=v_sub_num, key=c_k_num)
+                        cB.markdown(f"<div style='margin-top: 35px; color: gray;'>Gasto Amortización ROU - {cls}</div>", unsafe_allow_html=True)
+                        n_vals.append((c_k_num, sub_num))
             
             if st.form_submit_button("Actualizar y Guardar Plan de Cuentas"):
                 conn = conectar()

@@ -121,6 +121,18 @@ def inicializar_db():
                     ('CUENTA_GANANCIA_TC_NUM', '4302'), ('CUENTA_GANANCIA_TC_NOM', 'Ganancia por Dif. Cambio')]
         cursor.executemany("INSERT INTO config_params VALUES (?,?)", defaults)
         
+    # --- Índices para mejorar rendimiento ---
+    # Contratos
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contratos_moneda ON contratos(Moneda)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contratos_estado ON contratos(Estado)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_contratos_empresa ON contratos(Empresa)")
+    # Remediciones
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediciones_codigo ON remediciones(Codigo_Interno)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediciones_fecha ON remediciones(Fecha_Remedicion)")
+    # Monedas
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_monedas_fecha ON monedas(fecha)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_monedas_moneda ON monedas(moneda)")
+
     conn.commit()
     conn.close()
 
