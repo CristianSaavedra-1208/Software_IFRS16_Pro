@@ -2602,6 +2602,41 @@ def modulo_asistente_ibr():
                 else:
                     st.error("Los parámetros ingresados no generaron un cuadro válido.")
 
+def modulo_perfil():
+    st.header("⚙️ Mi Perfil")
+    st.write("Gestiona tu cuenta y cambia tu contraseña de acceso.")
+    
+    usuario_actual = st.session_state.get('user', '')
+    
+    if not usuario_actual:
+        st.error("Error de sesión.")
+        return
+        
+    with st.form("form_cambio_clave"):
+        st.write(f"**Usuario:** {usuario_actual}")
+        p_antigua = st.text_input("Contraseña Actual", type="password")
+        p_nueva = st.text_input("Nueva Contraseña", type="password")
+        p_repetir = st.text_input("Repetir Nueva Contraseña", type="password")
+        
+        if st.form_submit_button("Guardar Cambios", type="primary"):
+            from db import verificar_credenciales, agregar_usuario
+            rol = verificar_credenciales(usuario_actual, p_antigua)
+            
+            if not rol:
+                st.error("❌ La contraseña actual es incorrecta.")
+            elif p_nueva != p_repetir:
+                st.error("❌ Las nuevas contraseñas no coinciden.")
+            elif len(p_nueva) < 4:
+                st.error("❌ La nueva contraseña debe tener al menos 4 caracteres.")
+            elif p_nueva == p_antigua:
+                st.warning("⚠️ La nueva contraseña no puede ser igual a la anterior.")
+            else:
+                agregar_usuario(usuario_actual, p_nueva, rol=rol)
+                st.session_state.success_msg = "✅ ¡Tu contraseña ha sido actualizada exitosamente! Usa esta nueva clave en tu próximo inicio de sesión."
+                st.rerun()
+                
+    st.info("💡 **Recordatorio de Nube:** Debido a la arquitectura actual, los cambios hechos en esta pantalla modificarán la base inmediatamente. Sin embargo, para que sean permanentes a largo plazo, el Administrador debe hacer PUSH del archivo de la base de datos hacia GitHub.")
+
 def main():
     inicializar_db() # Garantizar que la BD exista al iniciar
     if not st.session_state.auth:
@@ -2672,18 +2707,18 @@ def main():
         st.sidebar.button("Salir (Cerrar Sesión)", on_click=lambda: st.session_state.clear() or st.session_state.update(auth=False))
         
         # --- DEFINICIÓN DE MENÚ RBAC ---
-        menus_todas = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Configuración"]
+        menus_todas = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Configuración", "Mi Perfil"]
         
         if rol_actual == 'Administrador':
             opciones_menu = menus_todas
         elif rol_actual == 'Analista Financiero (Editor)':
             opciones_menu = [m for m in menus_todas if m not in ['Configuración', 'Auditoría']]
         elif rol_actual == 'Auditor Ext. / Gerencia (Lector)':
-            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)"]
+            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Mi Perfil"]
         elif rol_actual == 'Ingeniero IT (Técnico)':
-            opciones_menu = ["Configuración"]
+            opciones_menu = ["Configuración", "Mi Perfil"]
         else:
-            opciones_menu = ["Resumen de Saldos"]
+            opciones_menu = ["Resumen de Saldos", "Mi Perfil"]
 
         op = st.sidebar.radio("Menú Principal", opciones_menu)
         if op == "Monedas": modulo_monedas()
@@ -2695,6 +2730,7 @@ def main():
         elif op == "Auditoría": modulo_auditoria()
         elif op == "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)": modulo_asistente_ibr()
         elif op == "Configuración": modulo_configuracion()
+        elif op == "Mi Perfil": modulo_perfil()
         
         t1 = time.time()
         reloj_ui.markdown(f"<div style='text-align: right; color: gray; font-size: 0.9em; margin-top: -40px;'>⏱️ Tiempo de ejecución: {t1 - t0:.2f} s</div>", unsafe_allow_html=True)
