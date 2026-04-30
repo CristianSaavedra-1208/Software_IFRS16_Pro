@@ -1,0 +1,33 @@
+Line 270:                     # Calcular saldos al momento del cese/remedición
+Line 419:                 saldo_libro = last_target_balance + flujo_pasivo_mes
+Line 420:                 reajuste = target_balance - saldo_libro
+Line 577:     st.header("📋 Movimiento de saldos (Nota de Pasivos y Activos)")
+Line 583:     if st.button("Generar Movimiento de saldos", type="primary"):
+Line 615:             # Saldo Inicial (Cierre del año anterior YTD)
+Line 665:             # 5. Fijación Excéntrica del Saldo Final (Fotografía Real)
+Line 724:         t1, t2 = st.tabs(["Movimiento de saldos por Clase", "Detalle por Contrato individual"])
+Line 727:             st.subheader("Movimiento de saldos (Horizontal) - Pasivos")
+Line 738:                 st.subheader("Movimiento de saldos (Horizontal) - Activos ROU")
+Line 761:     st.header("🧮 Panel de Saldos")
+Line 769:     if st.button("Generar Resumen de Saldos", type="primary"):
+Line 978:                 st.download_button("Exportar Resumen (Excel)", to_excel(df_grp), f"Resumen_Saldos_{m_saved}_{a_saved}.xlsx")
+Line 993:                 st.download_button("Exportar Detalle (Excel)", to_excel(df_res), f"Resumen_Saldos_Detalle_{m_saved}_{a_saved}.xlsx")
+Line 1337:                     # Simulamos el contrato hasta la fecha de remedición para obtener los saldos de corte
+Line 1342:                         st.error("La fecha seleccionada no permite capturar saldos históricos.")
+Line 1474:                                     errores.append(f"Contrato {cid}: No existen saldos históricos previos a {f_rem.date()}.")
+Line 1581:             # Para que cuadre perfectamente con el saldo contable en "Pasivos Descontados",
+Line 1585:             # Para la primera cuota corriente del mes siguiente, S_Ini_Orig es el Saldo del Pasivo Total de HOY.
+Line 1587:             # saldo_remanente_hoy es la fotografia real de pasivo en el balance a f_t
+Line 1588:             saldo_remanente_hoy = tab[tab['Fecha'] <= f_t].iloc[-1]['S_Fin_Orig'] if not tab[tab['Fecha'] <= f_t].empty else tab.iloc[0]['S_Ini_Orig']
+Line 1640:                 diferencia_residual = saldo_remanente_hoy - suma_distribuida_orig
+Line 1732:         `Interés_Mes = Saldo_Inicial_Capital * Tasa_Mensual` (Para vencidos)
+Line 1733:         `Interés_Mes = (Saldo_Inicial_Capital - Canon) * Tasa_Mensual` (Para anticipados)
+Line 2159:         • <b>Tasa Mensual Equivalente</b>: Es la tasa de descuento periódica derivada de la Tasa Anual mediante la fórmula de interés compuesto (raíz doceava). Esta tasa se aplica directamente sobre el saldo insoluto del pasivo en cada cierre mensual para registrar el gasto financiero del periodo.
+Line 2311:                 cap = cols[0].number_input(f"Deuda {i+1} - Monto Capital en {moneda_global}", min_value=0.0, step=1000.0, value=10000.0, key=f"cap_{i}", help="El saldo actual vigente de este préstamo comercial que la empresa pidió al banco.")
+Line 2404:                 st.markdown(f"**¿Cómo contabilizar?**\nAplique la tasa del **{t_mensual_calc:.6f}%** mes a mes sobre el saldo insoluto del pasivo en su cuadro de amortización para reconocer el devengo del gasto financiero mensual bajo IFRS 16.")
+Line 2437:                 doc.add_paragraph(f"Aplicación: Multiplique el saldo insoluto del pasivo por arrendamiento por la tasa mensual de {t_mensual_calc:.6f}% en cada cierre contable para reconocer el gasto financiero devengado en el mes bajo la normativa NIIF 16.")
+Line 2710:         menus_todas = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Configuración", "Mi Perfil"]
+Line 2717:             opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Mi Perfil"]
+Line 2721:             opciones_menu = ["Resumen de Saldos", "Mi Perfil"]
+Line 2726:         elif op == "Resumen de Saldos": modulo_dashboard()
+Line 2728:         elif op == "Nota: Movimiento de saldos": modulo_notas()

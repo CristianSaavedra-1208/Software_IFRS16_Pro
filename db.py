@@ -112,7 +112,7 @@ def inicializar_db():
                     ('CLASE_ACTIVO', 'Inmuebles'),
                     ('CUENTA_ROU_NUM', '1401'), ('CUENTA_ROU_NOM', 'Activo Derecho de Uso ROU'),
                     ('CUENTA_PASIVO_NUM', '2101'), ('CUENTA_PASIVO_NOM', 'Pasivo por Arrendamiento IFRS 16'),
-                    ('CUENTA_BCO_AJUSTE_NUM', '1101'), ('CUENTA_BCO_AJUSTE_NOM', 'Banco / Provisiones Ajuste Inicial'),
+                    ('CUENTA_BCO_AJUSTE_NUM', '1101'), ('CUENTA_BCO_AJUSTE_NOM', 'Ajustes'),
                     ('CUENTA_GASTO_AMORT_NUM', '4101'), ('CUENTA_GASTO_AMORT_NOM', 'Gasto Amortización ROU'),
                     ('CUENTA_AMORT_ACUM_NUM', '1402'), ('CUENTA_AMORT_ACUM_NOM', 'Amortización Acumulada ROU'),
                     ('CUENTA_GASTO_INT_NUM', '4201'), ('CUENTA_GASTO_INT_NOM', 'Gasto Financiero Interés'),
@@ -282,7 +282,7 @@ def cargar_contratos():
     conn.close()
     return rows
 
-def insertar_contrato(c):
+def insertar_contrato(c, usuario_act="Sistema/Usuario"):
     conn = conectar()
     
     # Asegurar llaves numéricas por defecto
@@ -310,21 +310,21 @@ def insertar_contrato(c):
     conn.close()
     
     # Audit Log
-    registrar_log("Sistema/Usuario", "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c['Inicio']}, Clase: {c['Clase_Activo']}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
+    registrar_log(usuario_act, "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c['Inicio']}, Clase: {c['Clase_Activo']}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
 
-def dar_baja_contrato(cod, fecha):
+def dar_baja_contrato(cod, fecha, usuario_act="Sistema/Usuario"):
     conn = conectar()
     conn.execute("UPDATE contratos SET Estado='Baja', Fecha_Baja=? WHERE Codigo_Interno=?", (fecha, cod))
     conn.commit()
     conn.close()
-    registrar_log("Sistema/Usuario", "BAJA_CONTRATO", cod, f"Dado de baja el {fecha}")
+    registrar_log(usuario_act, "BAJA_CONTRATO", cod, f"Dado de baja el {fecha}")
 
-def marcar_contrato_remedido(cod, fecha):
+def marcar_contrato_remedido(cod, fecha, usuario_act="Sistema/Usuario"):
     conn = conectar()
     conn.execute("UPDATE contratos SET Estado='Remedido', Fecha_Baja=? WHERE Codigo_Interno=?", (fecha, cod))
     conn.commit()
     conn.close()
-    registrar_log("Sistema/Usuario", "MARCAR_REMEDIDO", cod, f"Marcado Histórico por nueva Remedición el {fecha}")
+    registrar_log(usuario_act, "MARCAR_REMEDIDO", cod, f"Marcado Histórico por nueva Remedición el {fecha}")
 
 def actualizar_contrato_remedicion(cod, can, tas, t_m, fin, p, f_rem):
     conn = conectar()
@@ -333,13 +333,13 @@ def actualizar_contrato_remedicion(cod, can, tas, t_m, fin, p, f_rem):
     conn.commit()
     conn.close()
 
-def insertar_remedicion(cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas=0.0, b_rou=0.0, pl_efec=0.0):
+def insertar_remedicion(cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas=0.0, b_rou=0.0, pl_efec=0.0, usuario_act="Sistema/Usuario"):
     conn = conectar()
     conn.execute("INSERT INTO remediciones (Codigo_Interno, Fecha_Remedicion, Canon, Tasa, Tasa_Mensual, Fin, Plazo, Ajuste_ROU, Baja_Pasivo, Baja_ROU, P_L_Efecto) VALUES (?,?,?,?,?,?,?,?,?,?,?)", 
                  (cod, f_rem, can, tas, t_m, fin, p, aj_rou, b_pas, b_rou, pl_efec))
     conn.commit()
     conn.close()
-    registrar_log("Sistema/Usuario", "CREAR_REMEDICION", cod, f"Nueva Remedición desde {f_rem}. P/L Efectivo: {pl_efec}")
+    registrar_log(usuario_act, "CREAR_REMEDICION", cod, f"Nueva Remedición desde {f_rem}. P/L Efectivo: {pl_efec}")
 
 def cargar_remediciones(cod=None):
     conn = conectar()
