@@ -561,8 +561,22 @@ except Exception as e:
     print("❌ Ocurrió un error inesperado:")
     print(str(e))
 """
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stExpander"] div.stDownloadButton > button {
+                        background-color: #FFD700 !important;
+                        color: #000000 !important;
+                        border: 1px solid #FFC107 !important;
+                        font-weight: 600 !important;
+                    }
+                    div[data-testid="stExpander"] div.stDownloadButton > button:hover {
+                        background-color: #FFC107 !important;
+                        border: 1px solid #FFB300 !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
                     st.download_button(
-                        label="🚀 Descargar Archivo de Inyección ERP (.py)",
+                        label="Registro Contable Preliminar",
                         data=script_content,
                         file_name=f"registro_erp_{m_saved}_{a_saved}.py",
                         mime="text/x-python"
@@ -2368,68 +2382,127 @@ def modulo_asistente_ibr():
         st.markdown("**A. Determinación de la Tasa Base Libre de Riesgo**")
         st.caption("**El Nuevo Contrato**: Aquí se evalúan las condiciones macroeconómicas puras del contrato (Moneda y Plazo), para obtener la tasa inicial libre de riesgo aplicable en el mercado.")
         
-        c_cuotas, c_tasa = st.columns(2)
+        c_cuotas, _ = st.columns(2)
         plazo_meses_ibr = c_cuotas.number_input("Número de Cuotas (Plazo en Meses)", min_value=1, max_value=600, value=60, step=1)
-        
         plazo_anios = plazo_meses_ibr / 12.0
+
         if moneda_global == "UF":
-            desc_tasa = f"Ingrese Tasa BCU a {plazo_anios:.1f} años (% Anual)"
+            nombre_base = "BCU"
         elif moneda_global == "CLP":
-            desc_tasa = f"Ingrese Tasa BCP a {plazo_anios:.1f} años (% Anual)"
+            nombre_base = "BCP"
         elif moneda_global == "USD":
-            desc_tasa = f"Treasury Yield a {plazo_anios:.1f} años (% Anual)"
+            nombre_base = "Treasury Yield"
         else:
-            desc_tasa = f"Bunds (Alemania) a {plazo_anios:.1f} años (% Anual)"
-            
-        tasa_base = c_tasa.number_input(desc_tasa, min_value=0.0, value=3.0, step=0.1)
+            nombre_base = "Bunds (Alemania)"
+
+        st.markdown(f"**¿Existe una tasa publicada en el mercado para el plazo exacto de su contrato ({plazo_anios:.1f} años)?**")
+        usa_tasa_directa = st.radio("Seleccione el método:", ["Sí, existe", "No, necesito interpolar tasas"], horizontal=True, label_visibility="collapsed")
         
+        tasa_base = 0.0
+        desc_tasa = f"Ingrese Tasa {nombre_base} a {plazo_anios:.1f} años (% Anual)"
+        
+        if "Sí" in usa_tasa_directa:
+            tasa_base = st.number_input(desc_tasa, min_value=0.0, value=3.0, step=0.1)
+        else:
+            st.info("💡 **Calculadora de Interpolación Lineal:** Ingrese los tramos más cercanos (menor y mayor) disponibles en el mercado.")
+            col_int1, col_int2 = st.columns(2)
+            
+            p_menor_val = max(1, int(plazo_anios))
+            p_mayor_val = max(p_menor_val + 1, int(plazo_anios) + 1)
+
+            with col_int1:
+                st.markdown("**Tramo Anterior (Menor Plazo)**")
+                p_menor = st.number_input("Plazo Menor (Años)", min_value=1, value=p_menor_val, step=1)
+                t_menor = st.number_input("Tasa Menor (% Anual)", min_value=0.0, value=2.0, step=0.1)
+            with col_int2:
+                st.markdown("**Tramo Superior (Mayor Plazo)**")
+                p_mayor = st.number_input("Plazo Mayor (Años)", min_value=p_menor+1, value=p_mayor_val, step=1)
+                t_mayor = st.number_input("Tasa Mayor (% Anual)", min_value=0.0, value=4.0, step=0.1)
+                
+            if p_mayor > p_menor:
+                tasa_base = t_menor + (plazo_anios - p_menor) * (t_mayor - t_menor) / (p_mayor - p_menor)
+                st.success(f"✅ **Tasa {nombre_base} Interpolada (a {plazo_anios:.1f} años):** {tasa_base:.4f}%")
+            else:
+                st.error("El Plazo Mayor debe ser estrictamente superior al Plazo Menor.")
+
+        embi_base = 0.0
+        if moneda_global in ["USD", "EUR"]:
+            st.markdown(f"**Ajuste por Entorno Económico (Riesgo País)**")
+            st.info(f"💡 Como el contrato es en {moneda_global}, la Tasa Base ({nombre_base}) no refleja el riesgo de su país. Ingrese el Riesgo País (EMBI - Emerging Market Bond Index) actual para ajustarla.")
+            embi_base = st.number_input("Tasa EMBI (Emerging Market Bond Index) / Riesgo País Actual (% Anual)", min_value=0.0, step=0.1, value=0.0)
+            if embi_base > 0:
+                st.success(f"✅ Tasa Libre de Riesgo Ajustada Localmente: {(tasa_base + embi_base):.4f}%")
+
         st.markdown("**B. Determinación del Spread de Riesgo Ponderado**")
         st.caption("**El Perfil de la Empresa**: Aquí se evalúa el historial crediticio corporativo para medir el 'sobrecargo' por riesgo que los acreedores exigen comercialmente a la compañía.")
-        if moneda_global == "UF":
-            nombre_instrumento = "Bono del Banco Central en UF - BCU"
-        elif moneda_global == "CLP":
-            nombre_instrumento = "Bono del Banco Central en Pesos - BCP"
-        elif moneda_global == "USD":
-            nombre_instrumento = "US Treasury Yield"
-        else:
-            nombre_instrumento = "Bunds - Bonos Soberanos de Alemania"
             
         st.info(f'''💡 **Guía de Carga de Deudas Históricas:**
-- **Tasa Deuda Asignada (% Anual):** La tasa de interés cobrada por el banco en ese crédito comercial específico.
-- **Tasa Ref. Histórica (% Anual):** La Tasa Libre de Riesgo (**extrayendo el {nombre_instrumento}**) que existía *exactamente en la misma fecha* que se firmó el crédito, **y por el mismo plazo original de esa deuda**.
-
-*El sistema restará ambas automáticamente para aislar el sobrecargo originario por Riesgo de Empresa.*''')
+- **Moneda de la Deuda:** Seleccione la moneda en la que se originó el crédito.
+- **Tasa Ref. Histórica:** Ingrese la tasa libre de riesgo de esa moneda específica que existía al tomar el crédito.
+*Si ingresa deudas en diferentes monedas, el sistema utilizará el tipo de cambio del día para normalizar los ponderadores matemáticos.*''')
         
         num_deudas = st.number_input("¿Cuántas deudas vigentes posee para determinar el Spread de Riesgo?", min_value=0, max_value=10, value=1, step=1)
         
         deudas = []
-        suma_capital = 0.0
+        suma_capital_norm = 0.0
         suma_ponderada = 0.0
+        suma_capital_nominal_print = 0.0
         
         if num_deudas > 0:
             st.write("Ingrese el detalle de cada deuda:")
             for i in range(num_deudas):
-                cols = st.columns(3)
-                cap = cols[0].number_input(f"Deuda {i+1} - Monto Capital en {moneda_global}", min_value=0.0, step=1000.0, value=10000.0, key=f"cap_{i}", help="El saldo actual vigente de este préstamo comercial que la empresa pidió al banco.")
-                t_deuda = cols[1].number_input(f"Deuda {i+1} - Tasa Deuda Asignada (% Anual)", min_value=0.0, step=0.1, value=6.0, key=f"td_{i}", help="La tasa de interés anual que el banco cobró a la empresa exactamente al adquirir esta deuda.")
-                t_ref = cols[2].number_input(f"Deuda {i+1} - Tasa Ref. Histórica (% Anual)", min_value=0.0, step=0.1, value=4.0, key=f"tref_{i}", help="La Tasa Base Libre de Riesgo (Bono Central o Treasury) que existía a nivel macroeconómico exactamente en la fecha histórica en que se firmó este crédito. El sistema hace una resta para aislar el sobrecargo exacto (Spread por Riesgo de Empresa) que el banco aplicó en ese momento.")
+                st.markdown(f"**Deuda {i+1}**")
+                col_m, col_p = st.columns(2)
+                moneda_deuda = col_m.selectbox(f"Moneda de Origen (Deuda {i+1})", monedas_activas, index=monedas_activas.index(moneda_global) if moneda_global in monedas_activas else 0, key=f"md_{i}")
+                plazo_meses_deuda = col_p.number_input(f"Plazo Original (Meses) Deuda {i+1}", min_value=1, max_value=600, value=60, step=1, key=f"pmd_{i}")
+                plazo_anios_deuda = plazo_meses_deuda / 12.0
                 
-                spread = t_deuda - t_ref
-                suma_capital += cap
-                suma_ponderada += (spread * cap)
-                deudas.append({"capital": cap, "tasa_deuda": t_deuda, "tasa_ref_hist": t_ref, "spread": spread})
+                if moneda_deuda == "UF":
+                    nom_ref = "BCU"
+                elif moneda_deuda == "CLP":
+                    nom_ref = "BCP"
+                elif moneda_deuda == "USD":
+                    nom_ref = "US Treasury"
+                else:
+                    nom_ref = "Bunds"
+
+                cols = st.columns(3)
+                cap = cols[0].number_input(f"Monto Capital en {moneda_deuda}", min_value=0.0, step=1000.0, value=10000.0, key=f"cap_{i}")
+                t_deuda = cols[1].number_input(f"Tasa Deuda ({moneda_deuda} % Anual)", min_value=0.0, step=0.1, value=6.0, key=f"td_{i}")
+                t_ref = cols[2].number_input(f"Ref. Histórica ({nom_ref} a {plazo_anios_deuda:.1f} años %)", min_value=0.0, step=0.1, value=4.0, key=f"tref_{i}")
+                
+                embi_hist = 0.0
+                if moneda_deuda in ["USD", "EUR"]:
+                    embi_hist = st.number_input(f"Tasa EMBI (Emerging Market Bond Index) de la fecha de origen del contrato de préstamo (%)", min_value=0.0, step=0.1, value=0.0, key=f"embi_{i}", help="Emerging Markets Bond Index: Ingrese el Riesgo País exacto de la fecha en que el banco le otorgó este préstamo. Esto limpiará la tasa histórica para aislar su spread corporativo puro.")
+
+                spread = t_deuda - t_ref - embi_hist
+                
+                # Obtener TC actual para ponderacion
+                tc_deuda = 1.0
+                if moneda_deuda != "CLP":
+                    import datetime
+                    tc_val = obtener_tc_cache(moneda_deuda, datetime.date.today())
+                    if tc_val and tc_val > 0:
+                        tc_deuda = tc_val
+                        
+                capital_normalizado = cap * tc_deuda
+                suma_capital_norm += capital_normalizado
+                suma_ponderada += (spread * capital_normalizado)
+                suma_capital_nominal_print += cap
+                
+                deudas.append({"capital": cap, "moneda": moneda_deuda, "plazo_anios": plazo_anios_deuda, "tasa_deuda": t_deuda, "tasa_ref_hist": t_ref, "nom_ref": nom_ref, "embi": embi_hist, "spread": spread, "capital_norm": capital_normalizado})
                 
         st.markdown("---")
         
         if st.button("▶ Ejecutar Cálculo de Tasa IBR", type="primary"):
             spread_ponderado = 0.0
-            if suma_capital > 0:
-                spread_ponderado = suma_ponderada / suma_capital
+            if suma_capital_norm > 0:
+                spread_ponderado = suma_ponderada / suma_capital_norm
                 
-            ibr_final = tasa_base + spread_ponderado
+            ibr_final = tasa_base + embi_base + spread_ponderado
             
             st.subheader("Resultados y Memoria de Cálculo (IBR)")
-            st.success(f"**Tasa IBR Anual Final (Tasa Base + Spread): {ibr_final:.4f}%**")
+            st.success(f"**Tasa IBR Anual Final (Tasa Base + EMBI + Spread): {ibr_final:.4f}%**")
             st.latex(r"Tasa\ IBR = Tasa\ Libre\ Riesgo + \frac{\sum_{j=1}^{m} Spread_j \times Capital_j}{\sum_{j=1}^{m} Capital_j}")
             st.write(f"- Plazo del Contrato: {plazo_meses_ibr} meses ({plazo_anios:.1f} años)")
             st.write(f"- Tasa Base Libre de Riesgo Aplicada ({desc_tasa.replace('Ingrese ', '').replace(' (%)', '')}): {tasa_base:.4f}%")
@@ -2449,14 +2522,48 @@ def modulo_asistente_ibr():
             doc.add_paragraph(f"Moneda del Contrato: {moneda_global}")
             doc.add_paragraph(f"Plazo del Contrato: {plazo_meses_ibr} meses ({plazo_anios:.1f} años)")
             doc.add_paragraph(f"Tasa Base Libre de Riesgo Aplicada ({desc_tasa.replace('Ingrese ', '').replace(' (%)', '')}): {tasa_base:.4f}%")
+            if "No" in usa_tasa_directa:
+                doc.add_paragraph("Metodología de Tasa Base: Se utilizó Interpolación Lineal para determinar la tasa exacta al plazo del contrato dado que no existía una tasa observable directa.")
+                doc.add_paragraph(f" - Tramo Menor: {p_menor} años -> Tasa: {t_menor:.4f}%")
+                doc.add_paragraph(f" - Tramo Mayor: {p_mayor} años -> Tasa: {t_mayor:.4f}%")
+                doc.add_paragraph(f" - Fórmula de Interpolación: Tasa Interpolada (Y) = Y1 + (X - X1) * [ (Y2 - Y1) / (X2 - X1) ]")
+                doc.add_paragraph(f" - Desarrollo Matemático: {t_menor:.4f}% + ({plazo_anios:.1f} - {p_menor}) * [ ({t_mayor:.4f}% - {t_menor:.4f}%) / ({p_mayor} - {p_menor}) ] = {tasa_base:.4f}%")
+
+            if embi_base > 0:
+                doc.add_paragraph(f"Ajuste EMBI (Emerging Market Bond Index - Riesgo País Actual): {embi_base:.4f}%")
+                doc.add_paragraph("Justificación IFRS 16: Se adiciona el Riesgo País (EMBI) a la tasa base para reflejar las condiciones económicas locales del arrendatario, tal como exige la norma.")
+                doc.add_paragraph(f"Tasa Base Ajustada Localmente: {(tasa_base + embi_base):.4f}%")
             
             doc.add_heading("2. Detalle de Deudas y Spread", level=1)
             if num_deudas == 0:
                 doc.add_paragraph("No se ingresaron deudas referenciales. Spread = 0.0000%")
             else:
-                doc.add_paragraph(f"Capital Total Histórico Vigente Ponderado: {suma_capital:,.2f}")
+                doc.add_paragraph(f"Capital Total Nominal Ingresado: {suma_capital_nominal_print:,.2f}")
+                if num_deudas > 1 and len(set([d['moneda'] for d in deudas])) > 1:
+                    doc.add_paragraph("Nota: Dado que se ingresaron múltiples deudas en distintas monedas, los capitales fueron estandarizados utilizando el tipo de cambio del día para la ponderación matemática, asegurando la proporcionalidad real de la exposición al riesgo.")
+                
+                if any(d.get('embi', 0) > 0 for d in deudas):
+                    doc.add_paragraph("Nota IFRS 16: Para deudas en moneda extranjera se incluye la tasa EMBI para reflejar el riesgo económico del entorno del contrato en base a lo requerido por IFRS 16.")
+                
                 for i, d in enumerate(deudas):
-                    doc.add_paragraph(f"Deuda {i+1}: Capital {d['capital']:,.2f} | Tasa Deuda {d['tasa_deuda']:.4f}% | Ref. Histórica {d['tasa_ref_hist']:.4f}% | Spread {d['spread']:.4f}%")
+                    embi_str = f" | EMBI (Emerging Market Bond Index) Hist. {d['embi']:.4f}%" if d.get('embi', 0) > 0 else ""
+                    doc.add_paragraph(f"Deuda {i+1}: Capital {d['capital']:,.2f} {d['moneda']} | Plazo: {d['plazo_anios']:.1f} años | Tasa Deuda {d['tasa_deuda']:.4f}% | Ref. Histórica ({d['nom_ref']}) {d['tasa_ref_hist']:.4f}%{embi_str} | Spread Puro {d['spread']:.4f}%")
+                    
+                    calc_spread_str = f"    - Desarrollo Spread Puro (Deuda {i+1}): {d['tasa_deuda']:.4f}% (Tasa Deuda) - {d['tasa_ref_hist']:.4f}% (Ref. Histórica)"
+                    if d.get('embi', 0) > 0:
+                        calc_spread_str += f" - {d['embi']:.4f}% (EMBI Histórico - Emerging Market Bond Index)"
+                    calc_spread_str += f" = {d['spread']:.4f}%"
+                    doc.add_paragraph(calc_spread_str)
+
+                doc.add_paragraph("")
+                doc.add_paragraph("Cálculo de Ponderación (Spread Ponderado):")
+                doc.add_paragraph("    Fórmula: Σ (Spread Puro × Capital Normalizado) / Σ Capital Normalizado")
+                
+                if num_deudas >= 1:
+                    numerador_calc = " + ".join([f"({d['spread']:.4f}% × {d['capital_norm']:,.2f})" for d in deudas])
+                    denominador_calc = " + ".join([f"{d['capital_norm']:,.2f}" for d in deudas])
+                    doc.add_paragraph(f"    Desarrollo: [ {numerador_calc} ] / [ {denominador_calc} ] = {spread_ponderado:.4f}%")
+                
                 doc.add_paragraph(f"RESULTADO SPREAD PONDERADO: {spread_ponderado:.4f}%")
                 
             doc.add_heading("3. Fórmula de Cálculo", level=1)
@@ -2468,7 +2575,14 @@ def modulo_asistente_ibr():
                     img_data_ibr = response_ibr.read()
                 doc.add_picture(io.BytesIO(img_data_ibr), width=Inches(4.5))
             except Exception:
-                doc.add_paragraph("Tasa IBR = Tasa Base Actual + Spread Ponderado")
+                doc.add_paragraph("Fórmula Genérica: Tasa IBR = Tasa Libre de Riesgo + Spread Ponderado")
+            
+            doc.add_paragraph("")
+            doc.add_paragraph("Desarrollo Matemático Final:")
+            if embi_base > 0:
+                doc.add_paragraph(f"Tasa IBR = {tasa_base:.4f}% (Tasa Base) + {embi_base:.4f}% (EMBI) + {spread_ponderado:.4f}% (Spread Ponderado) = {ibr_final:.4f}%")
+            else:
+                doc.add_paragraph(f"Tasa IBR = {tasa_base:.4f}% (Tasa Base) + {spread_ponderado:.4f}% (Spread Ponderado) = {ibr_final:.4f}%")
             
             doc.add_heading("4. Resultado Final", level=1)
             p = doc.add_paragraph()
