@@ -443,6 +443,19 @@ def modulo_asientos():
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), abs(reajuste), 0)
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Ganancia', c_cls), 0, abs(reajuste))
 
+        # --- PLUG DE REDONDEO (CUENTA AJUSTES 1101) ---
+        total_debe = round(sum(d.get('Debe', 0) for d in detalles))
+        total_haber = round(sum(d.get('Haber', 0) for d in detalles))
+        diff = total_debe - total_haber
+        
+        if diff != 0 and abs(diff) <= 10:
+            emp_ajuste = detalles[0]['Empresa'] if detalles else "Varias"
+            cta_num_ajuste = '3111154'
+            if diff > 0:
+                add_asiento(detalles, emp_ajuste, 'SYS-ADJ', '8. Ajuste por Redondeo', cta_num_ajuste, 'Ajustes por Redondeo', 0, abs(diff))
+            else:
+                add_asiento(detalles, emp_ajuste, 'SYS-ADJ', '8. Ajuste por Redondeo', cta_num_ajuste, 'Ajustes por Redondeo', abs(diff), 0)
+
         st.session_state.asientos_data = detalles
         st.session_state.asientos_params = {'m': m_nom, 'a': a}
 
@@ -460,7 +473,7 @@ def modulo_asientos():
                 # Agregar Fila Total al Detalle
                 df_asientos.loc['Total'] = df_asientos.sum(numeric_only=True)
                 df_asientos.at['Total', 'Empresa'] = 'TOTALES'
-                df_asientos.at['Total', 'Cuenta'] = 'CUADRATURA'
+                df_asientos.at['Total', 'Cuenta'] = ''
                 
                 st.dataframe(df_asientos.style.format(precision=0, thousands="."))
                 st.download_button("Exportar Detalle de Asientos (Excel)", to_excel(df_asientos), f"Detalle_Asientos_{m_saved}_{a_saved}.xlsx")
@@ -476,7 +489,7 @@ def modulo_asientos():
                 df_resumen.at['Total', 'Empresa'] = 'TOTALES'
                 df_resumen.at['Total', 'Transacción'] = ''
                 df_resumen.at['Total', 'N° Cuenta'] = ''
-                df_resumen.at['Total', 'Cuenta'] = 'CUADRATURA PERFECTA'
+                df_resumen.at['Total', 'Cuenta'] = ''
                 df_resumen.at['Total', 'Tipo'] = ''
                 st.dataframe(df_resumen.style.format(precision=0, thousands="."))
                 st.download_button("Exportar Asientos Resumidos (Excel)", to_excel(df_resumen), f"Resumen_Asientos_{m_saved}_{a_saved}.xlsx")
@@ -1201,7 +1214,7 @@ def modulo_contratos():
                 st.info("No hay contratos cargados.")
         return
         
-    t1, t2, t3, t4, t5, t6 = st.tabs(["Ingreso de Contrato Manual", "Ingreso de Contrato Masiva", "Ver Todos los Datos", "Modificación Individual", "Baja Anticipada", "Modificación Masiva"])
+    t1, t2, t3, t4, t5, t7, t6 = st.tabs(["Ingreso de Contrato Manual", "Ingreso de Contrato Masiva", "Ver Todos los Datos", "Modificación Individual", "Baja Anticipada", "Baja Masiva", "Modificación Masiva"])
     
     with t1:
         with st.form("f"):
@@ -1428,7 +1441,7 @@ def modulo_contratos():
         st.subheader("Modificación de Contrato Existente")
         contratos_activos = [c for c in cargar_contratos() if c['Estado'] == 'Activo']
         if contratos_activos:
-            mapa_c = {f"{c['Codigo_Interno']} - {c['Nombre']}": c for c in contratos_activos}
+            mapa_c = {f"{c['Codigo_Interno']} - {c.get('Nombre', '')} | ID: {c.get('ID', '')} | Prov: {c.get('Proveedor', '')}": c for c in contratos_activos}
             sel = st.selectbox("Seleccione el Contrato a Modificar", list(mapa_c.keys()))
             c_sel = mapa_c[sel]
             
@@ -1525,6 +1538,80 @@ def modulo_contratos():
                 if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
                 st.session_state.success_msg = f"Contrato dado de baja exitosamente en la fecha {f_baja}"
                 st.rerun()
+
+    with t7:
+        st.subheader("Baja Masiva de Contratos por Excel")
+        st.write("Descargue la plantilla, asigne la 'Fecha_Efectiva_Baja' a los contratos que desea cancelar y suba el archivo.")
+        
+        if 'contratos_activos' in locals() and contratos_activos:
+            df_plantilla_baja = pd.DataFrame(contratos_activos)
+            cols_baja = ['Codigo_Interno', 'Empresa', 'Nombre', 'Inicio', 'Fin']
+            df_plantilla_baja = df_plantilla_baja[cols_baja]
+            df_plantilla_baja['Fecha_Efectiva_Baja'] = None
+            
+            st.download_button("📥 Descargar Plantilla de Bajas", to_excel(df_plantilla_baja), "plantilla_baja_masiva.xlsx")
+            
+            arch_baja = st.file_uploader("Subir Archivo de Bajas", type=["xlsx"], key="arch_baja_masivo")
+            if arch_baja is not None:
+                df_in_baja = pd.read_excel(arch_baja)
+                df_bajas = df_in_baja.dropna(subset=['Fecha_Efectiva_Baja']).copy()
+                
+                if df_bajas.empty:
+                    st.warning("No se detectó ninguna fila con 'Fecha_Efectiva_Baja'. No se realizarán bajas.")
+                else:
+                    st.markdown("**Simulador de Validación de Bajas**")
+                    errores_baja = []
+                    validos_baja = []
+                    
+                    ahoy_year = date.today().year
+                    
+                    for idx, r in df_bajas.iterrows():
+                        cid = str(r['Codigo_Interno']).strip()
+                        if cid not in mapa_c:
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "No existe o ya está dado de baja."})
+                            continue
+                            
+                        c_sel = mapa_c[cid]
+                        
+                        try:
+                            f_baja_val = pd.to_datetime(r['Fecha_Efectiva_Baja'])
+                        except:
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "Formato de fecha inválido."})
+                            continue
+                            
+                        f_i = pd.to_datetime(c_sel['Inicio'])
+                        f_f = pd.to_datetime(c_sel['Fin'])
+                        
+                        if f_baja_val < f_i:
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "Fecha de baja anterior al inicio."})
+                            continue
+                        if f_baja_val > f_f:
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "Fecha de baja posterior al fin natural."})
+                            continue
+                        if f_baja_val.year < ahoy_year:
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": f"Fecha retroactiva a año fiscal cerrado (< {ahoy_year})."})
+                            continue
+                            
+                        validos_baja.append((cid, f_baja_val))
+                    
+                    df_res = pd.DataFrame(errores_baja + [{"Contrato": v[0], "Estado": "✅ OK", "Motivo": "Listo para procesar"} for v in validos_baja])
+                    st.dataframe(df_res, use_container_width=True)
+                    
+                    if len(errores_baja) > 0:
+                        st.error(f"Se encontraron {len(errores_baja)} errores. Corrija el archivo Excel y vuelva a subirlo para habilitar el procesamiento.")
+                    elif len(validos_baja) > 0:
+                        st.success("Todos los contratos superaron la validación de negocio.")
+                        if st.button("Procesar Bajas Masivas", type="primary"):
+                            exitos = 0
+                            for cid, f_baja_val in validos_baja:
+                                dar_baja_contrato(cid, f_baja_val.strftime('%Y-%m-%d'), st.session_state.get('user', 'Sistema/Usuario'))
+                                exitos += 1
+                                
+                            if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                            st.session_state.success_msg = f"{exitos} contratos procesados masivamente para baja."
+                            st.rerun()
+        else:
+            st.info("No hay contratos activos para dar de baja.")
 
     with t6:
         st.subheader("Modificación Masiva de Contratos por Excel")
@@ -2285,7 +2372,7 @@ def modulo_asistente_ibr():
         col_m_imp, _ = st.columns(2)
         monedas_activas = obtener_parametros('MONEDA')
         if not monedas_activas: monedas_activas = ["UF", "CLP", "USD", "EUR"]
-        moneda_global = col_m_imp.selectbox("Seleccione la Moneda del contrato", monedas_activas, key="moneda_imp")
+        moneda_global = col_m_imp.selectbox("Seleccione la Moneda del contrato de arrendamiento", monedas_activas, key="moneda_imp")
         st.warning("⚠️ PARAMETROS BÁSICOS REQUERIDOS: Valor Razonable del bien, Valor residual al termino del contrato, Canon mensual y Plazo expresado en Meses. Si usted NO TIENE el monto económico preciso de alguno de estos parámetros comerciales, se recomienda utilizar de inmediato la TASA IBR para evitar errores matemáticos de cálculo financiero.")
         
         st.write("**A. Datos del Arrendador / Activo:**")
@@ -2368,7 +2455,7 @@ def modulo_asistente_ibr():
         col_m_ibr, _ = st.columns(2)
         monedas_activas = obtener_parametros('MONEDA')
         if not monedas_activas: monedas_activas = ["UF", "CLP", "USD", "EUR"]
-        moneda_global = col_m_ibr.selectbox("Seleccione la Moneda del contrato", monedas_activas, key="moneda_ibr")
+        moneda_global = col_m_ibr.selectbox("Seleccione la Moneda del contrato de arrendamiento", monedas_activas, key="moneda_ibr")
         
         with st.expander("📖 Enlaces de Referencia de Tasas (BCU, Treasury, etc.)", expanded=True):
             st.markdown('''
@@ -2516,7 +2603,7 @@ def modulo_asistente_ibr():
             
             doc = docx.Document()
             doc.add_heading("MEMORIA DE CÁLCULO - TASA DE DESCUENTO IBR (IFRS 16)", 0)
-            doc.add_paragraph(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            doc.add_paragraph(f"Fecha: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
             doc.add_heading("1. Variables Ingresadas", level=1)
             doc.add_paragraph(f"Moneda del Contrato: {moneda_global}")
@@ -2563,6 +2650,9 @@ def modulo_asistente_ibr():
                     numerador_calc = " + ".join([f"({d['spread']:.4f}% × {d['capital_norm']:,.2f})" for d in deudas])
                     denominador_calc = " + ".join([f"{d['capital_norm']:,.2f}" for d in deudas])
                     doc.add_paragraph(f"    Desarrollo: [ {numerador_calc} ] / [ {denominador_calc} ] = {spread_ponderado:.4f}%")
+                    
+                    if num_deudas == 1:
+                        doc.add_paragraph("    *Nota de Auditoría: Al existir una única deuda de referencia, su peso en la matriz de financiamiento representa el 100%. Matemáticamente, el capital del numerador se anula con el del denominador, resultando exactamente en el spread puro de esta única deuda.*")
                 
                 doc.add_paragraph(f"RESULTADO SPREAD PONDERADO: {spread_ponderado:.4f}%")
                 
@@ -2594,12 +2684,96 @@ def modulo_asistente_ibr():
             doc.save(output)
             word_data = output.getvalue()
             
-            st.download_button(
-                label="📄 Descargar Memoria de Cálculo IBR (Word)",
-                data=word_data,
-                file_name=f"Reporte_IBR_{datetime.datetime.now().strftime('%Y%m%d')}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+            col_btn1, col_btn2 = st.columns(2)
+            
+            with col_btn1:
+                st.download_button(
+                    label="📄 Descargar Memoria de Cálculo (Word)",
+                    data=word_data,
+                    file_name=f"Reporte_IBR_{__import__('datetime').datetime.now().strftime('%Y%m%d')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
+            
+            with col_btn2:
+                output_excel = io.BytesIO()
+                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                    workbook = writer.book
+                    
+                    fmt_pct = workbook.add_format({'num_format': '0.0000%'})
+                    fmt_num = workbook.add_format({'num_format': '#,##0.00'})
+                    fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+                    
+                    aplica_interpolacion = "No" in usa_tasa_directa
+                    
+                    if aplica_interpolacion:
+                        ws_int = workbook.add_worksheet('1_Interpolacion')
+                        headers_int = ['Plazo Contrato (Años)', 'Plazo Menor (X1)', 'Tasa Menor (Y1)', 'Plazo Mayor (X2)', 'Tasa Mayor (Y2)', 'Tasa Base Interpolada']
+                        for col_num, data in enumerate(headers_int):
+                            ws_int.write(0, col_num, data, fmt_header)
+                        
+                        ws_int.write_number(1, 0, plazo_anios)
+                        ws_int.write_number(1, 1, p_menor)
+                        ws_int.write_number(1, 2, t_menor / 100.0, fmt_pct)
+                        ws_int.write_number(1, 3, p_mayor)
+                        ws_int.write_number(1, 4, t_mayor / 100.0, fmt_pct)
+                        ws_int.write_formula(1, 5, '=C2+(A2-B2)*((E2-C2)/(D2-B2))', fmt_pct)
+                        ws_int.set_column('A:F', 20)
+
+                    ws_deudas = workbook.add_worksheet('2_Detalle_Deudas')
+                    headers_deudas = ['Deuda N°', 'Capital Nominal', 'Capital Ponderado', 'Moneda', 'Plazo (Años)', 'Tasa Deuda', 'Tasa Ref Histórica', 'EMBI', 'Spread Puro']
+                    for col_num, data in enumerate(headers_deudas):
+                        ws_deudas.write(0, col_num, data, fmt_header)
+                    
+                    num_d = len(deudas)
+                    for i, d in enumerate(deudas):
+                        row = i + 1
+                        ws_deudas.write_number(row, 0, i + 1)
+                        ws_deudas.write_number(row, 1, d['capital'], fmt_num)
+                        ws_deudas.write_number(row, 2, d['capital_norm'], fmt_num)
+                        ws_deudas.write_string(row, 3, d['moneda'])
+                        ws_deudas.write_number(row, 4, d['plazo_anios'])
+                        ws_deudas.write_number(row, 5, d['tasa_deuda'] / 100.0, fmt_pct)
+                        ws_deudas.write_number(row, 6, d['tasa_ref_hist'] / 100.0, fmt_pct)
+                        ws_deudas.write_number(row, 7, d.get('embi', 0) / 100.0, fmt_pct)
+                        ws_deudas.write_formula(row, 8, f'=F{row+1}-G{row+1}-H{row+1}', fmt_pct)
+                    ws_deudas.set_column('A:I', 18)
+
+                    ws_res = workbook.add_worksheet('3_Resumen_IBR')
+                    headers_res = ['Moneda', 'Plazo (Meses)', 'Plazo (Años)', 'Tasa Base Libre Riesgo', 'Ajuste EMBI', 'Spread Ponderado Empresa', 'TASA IBR FINAL']
+                    for col_num, data in enumerate(headers_res):
+                        ws_res.write(0, col_num, data, fmt_header)
+                    
+                    ws_res.write_string(1, 0, moneda_global)
+                    ws_res.write_number(1, 1, plazo_meses_ibr)
+                    ws_res.write_number(1, 2, plazo_anios)
+                    
+                    if aplica_interpolacion:
+                        ws_res.write_formula(1, 3, "='1_Interpolacion'!F2", fmt_pct)
+                    else:
+                        ws_res.write_number(1, 3, tasa_base / 100.0, fmt_pct)
+                    
+                    ws_res.write_number(1, 4, embi_base / 100.0, fmt_pct)
+                    
+                    if num_d > 0:
+                        f_sumprod = f"SUMPRODUCT('2_Detalle_Deudas'!C2:C{num_d+1}, '2_Detalle_Deudas'!I2:I{num_d+1})"
+                        f_sum = f"SUM('2_Detalle_Deudas'!C2:C{num_d+1})"
+                        ws_res.write_formula(1, 5, f"={f_sumprod}/{f_sum}", fmt_pct)
+                    else:
+                        ws_res.write_number(1, 5, 0, fmt_pct)
+                        
+                    ws_res.write_formula(1, 6, '=D2+E2+F2', fmt_pct)
+                    ws_res.set_column('A:G', 22)
+
+                excel_data = output_excel.getvalue()
+                
+                st.download_button(
+                    label="📊 Descargar Matriz de Cálculo (Excel)",
+                    data=excel_data,
+                    file_name=f"Matriz_IBR_{__import__('datetime').datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
         
     with tab_men:
         st.subheader("Conversor a Tasa Mensual Equivalente")
@@ -2627,7 +2801,7 @@ def modulo_asistente_ibr():
                 
                 doc = docx.Document()
                 doc.add_heading("MEMORIA DE CÁLCULO - TASA MENSUAL EQUIVALENTE (IFRS 16)", 0)
-                doc.add_paragraph(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                doc.add_paragraph(f"Fecha: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 
                 doc.add_heading("1. Variables Ingresadas", level=1)
                 doc.add_paragraph(f"Tasa Anual Efectiva (Implícita o IBR): {t_anual_input:.4f}%")
@@ -2659,7 +2833,7 @@ def modulo_asistente_ibr():
                 st.download_button(
                     label="📄 Descargar Memoria de Tasa Mensual (Word)",
                     data=word_data,
-                    file_name=f"Reporte_TasaMensual_{datetime.datetime.now().strftime('%Y%m%d')}.docx",
+                    file_name=f"Reporte_TasaMensual_{__import__('datetime').datetime.now().strftime('%Y%m%d')}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
 
