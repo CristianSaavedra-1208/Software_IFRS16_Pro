@@ -1565,13 +1565,16 @@ def modulo_contratos():
                     
                     ahoy_year = date.today().year
                     
+                    # Crear mapa correcto solo con el Codigo_Interno como llave para la lectura del Excel
+                    mapa_baja_excel = {c['Codigo_Interno']: c for c in contratos_activos}
+                    
                     for idx, r in df_bajas.iterrows():
                         cid = str(r['Codigo_Interno']).strip()
-                        if cid not in mapa_c:
+                        if cid not in mapa_baja_excel:
                             errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "No existe o ya está dado de baja."})
                             continue
                             
-                        c_sel = mapa_c[cid]
+                        c_sel = mapa_baja_excel[cid]
                         
                         try:
                             f_baja_val = pd.to_datetime(r['Fecha_Efectiva_Baja'])
@@ -2470,7 +2473,7 @@ def modulo_asistente_ibr():
         st.caption("**El Nuevo Contrato**: Aquí se evalúan las condiciones macroeconómicas puras del contrato (Moneda y Plazo), para obtener la tasa inicial libre de riesgo aplicable en el mercado.")
         
         c_cuotas, _ = st.columns(2)
-        plazo_meses_ibr = c_cuotas.number_input("Número de Cuotas (Plazo en Meses)", min_value=1, max_value=600, value=60, step=1)
+        plazo_meses_ibr = c_cuotas.number_input("Número de Cuotas (Plazo en Meses) del contrato", min_value=1, max_value=600, value=60, step=1)
         plazo_anios = plazo_meses_ibr / 12.0
 
         if moneda_global == "UF":
