@@ -3,7 +3,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from app import MESES_LISTA, to_excel
 from db import cargar_contratos
-from core import motor_financiero_v20, obtener_tc_cache
+from core import motor_financiero_v21, obtener_tc_cache
 
 m = 'Diciembre'
 a = 2024
@@ -22,7 +22,7 @@ for _, c in df_c.iterrows():
         f_baja = pd.to_datetime(c['Fecha_Baja'])
         if f_baja <= f_t: continue
         
-    tab, _, _ = motor_financiero_v20(c)
+    tab, _, _ = motor_financiero_v21(c)
     futuros = tab[tab['Fecha'] > f_t]
     if futuros.empty: continue
     

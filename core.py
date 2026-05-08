@@ -50,7 +50,7 @@ def __calc_vp(can, p, t_m, tipo, f_meses=1):
 import numpy as np
 
 @st.cache_data(show_spinner=False)
-def motor_financiero_v20(c, rems=None):
+def motor_financiero_v21(c, rems=None):
     if rems is None:
         from db import cargar_remediciones
         rems = cargar_remediciones(c['Codigo_Interno'])
@@ -137,10 +137,8 @@ def motor_financiero_v20(c, rems=None):
         if f_tramo_fin:
             # Eliminar periodos >= Fecha del siguiente tramo
             mask = mask & ((fechas_reales.year < f_tramo_fin.year) | ((fechas_reales.year == f_tramo_fin.year) & (fechas_reales.month < f_tramo_fin.month)))
-        if f_baja_final:
-            # Eliminar periodos > Fecha de baja
-            mask = mask & ((fechas_reales.year < f_baja_final.year) | ((fechas_reales.year == f_baja_final.year) & (fechas_reales.month <= f_baja_final.month)))
-            
+        # La tabla debe generarse hasta el Fin natural (o próxima remedición) para no corromper la distribución Corto/Largo plazo de meses anteriores.
+        # Las bajas (write-offs) se aplican lógicamente en app.py, reconciliacion.py y asientos.py evaluando f_baja_efectiva.            
         valid_idx = np.where(mask)[0]
         if len(valid_idx) == 0: continue
         

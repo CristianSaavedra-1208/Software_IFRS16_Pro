@@ -1,8 +1,11 @@
 import sqlite3
-c = sqlite3.connect('ifrs16_platinum.db')
-c.row_factory = sqlite3.Row
-res = c.execute('SELECT * FROM contratos WHERE Codigo_Interno="CNT-PAC-0001"').fetchone()
-if res:
-    print(dict(res))
-else:
-    print("Not found")
+import pandas as pd
+conn = sqlite3.connect('ifrs16_platinum.db')
+c = conn.cursor()
+c.execute("SELECT Codigo_Interno, Estado, Fecha_Baja FROM contratos WHERE Codigo_Interno='CNT-PAC-0495'")
+print(c.fetchone())
+
+c.execute("SELECT * FROM remediciones WHERE Codigo_Interno='CNT-PAC-0495'")
+for r in c.fetchall():
+    print(r)
+conn.close()

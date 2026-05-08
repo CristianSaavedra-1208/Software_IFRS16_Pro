@@ -156,14 +156,14 @@ def obtener_motor_financiero(c, rems=None):
         st.session_state.motor_cache = {}
     
     cid = c['Codigo_Interno']
-    hash_c = f"{c['Estado']}_{c['Canon']}_{c['Tasa']}_{c['Plazo']}_{c['Inicio']}_{c['Fin']}_{c.get('Fecha_Baja', '')}_{len(rems) if rems else 0}"
+    hash_c = f"{c['Estado']}_{c['Canon']}_{c['Tasa']}_{c['Plazo']}_{c['Inicio']}_{c['Fin']}_{c.get('Fecha_Baja', '')}_{len(rems) if rems else 0}_v21"
     
     if cid in st.session_state.motor_cache:
         cached_hash, tab, vp, rou = st.session_state.motor_cache[cid]
         if cached_hash == hash_c:
             return tab, vp, rou
             
-    tab, vp, rou = motor_financiero_v20(c, rems)
+    tab, vp, rou = motor_financiero_v21(c, rems)
     st.session_state.motor_cache[cid] = (hash_c, tab, vp, rou)
     return tab, vp, rou
 
@@ -896,6 +896,8 @@ def modulo_dashboard():
     a = c3.number_input("Año", value=date.today().year, key="dash_a")
     
     if st.button("Generar Resumen de Saldos", type="primary"):
+        if 'recon_excel_data' in st.session_state:
+            del st.session_state['recon_excel_data']
         f_t = pd.to_datetime(date(a, MESES_LISTA.index(m)+1, 1)) + relativedelta(day=31)
         df_c = pd.DataFrame(cargar_contratos())
         from db import cargar_remediciones_todas_agrupadas
@@ -1121,6 +1123,38 @@ def modulo_dashboard():
                 styled_df = styled_df.format(precision=4, thousands=".", subset=cols_canon)
                 st.dataframe(styled_df)
                 st.download_button("Exportar Detalle (Excel)", to_excel(df_res), f"Resumen_Saldos_Detalle_{m_saved}_{a_saved}.xlsx")
+
+        st.markdown("---")
+        st.markdown("---")
+        with st.expander("📊 Reconciliación Mensual de Saldos (Auditoría / Roll-Forward)", expanded=False):
+            st.write(f"Genera el reporte que detalla los movimientos mes a mes para reconciliar el saldo inicial con el saldo final de **{m_saved} {a_saved}**.")
+            if st.button(f"Generar Reporte hasta {m_saved} {a_saved}", type="secondary"):
+                with st.spinner(f"Calculando mes a mes hasta {m_saved} {a_saved}..."):
+                    from reconciliacion import generar_reconciliacion_rollforward
+                    from db import cargar_remediciones_todas_agrupadas
+                    df_recon = generar_reconciliacion_rollforward(
+                        empresa_sel=st.session_state.dash_params['emp'],
+                        a=st.session_state.dash_params['a'],
+                        mes_fin_nom=m_saved,
+                        lista_c=cargar_contratos(),
+                        rems_grupos=cargar_remediciones_todas_agrupadas()
+                    )
+                    if not df_recon.empty:
+                        # Damos estilo a los números
+                        styled_recon = df_recon.style.format(precision=0, thousands=".", subset=['ROU Bruto', 'Amortizacion Acumulada', 'Rou Neto', 'Pasivo total', 'Pasivo Corriente', 'Pasivo no corriente'])
+                        st.session_state.recon_excel_data = to_excel(styled_recon)
+                        st.session_state.recon_excel_name = f"Reconciliacion_Saldos_{st.session_state.dash_params['emp']}_{m_saved}_{st.session_state.dash_params['a']}.xlsx"
+                        st.session_state.recon_styled = styled_recon
+                    else:
+                        st.warning("No hay datos para generar la reconciliación.")
+            
+            if 'recon_excel_data' in st.session_state:
+                st.success("✅ Reporte de Reconciliación generado correctamente.")
+                if 'recon_styled' in st.session_state:
+                    st.dataframe(st.session_state.recon_styled, use_container_width=True)
+                st.download_button("📥 Descargar Excel de Reconciliación", 
+                                   data=st.session_state.recon_excel_data, 
+                                   file_name=st.session_state.recon_excel_name)
 
 def modulo_monedas():
     st.header("💱 Monedas")
@@ -1916,7 +1950,7 @@ def modulo_auditoria():
     with t1:
         st.subheader("Criterios Matemáticos de Cálculo IFRS 16")
         st.markdown('''
-        **Motor Financiero V21.0 - Estándar IFRS 16**
+        **Estándar IFRS 16**
         
         1. **Conversión de Tasa de Interés (Tasa Efectiva Mensual)** *(Ref. NIIF 16 Párraf. 26)*
         Se utiliza la fórmula de interés compuesto para hallar la tasa mensual equivalente a partir del input anual:
