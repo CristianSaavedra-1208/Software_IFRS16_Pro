@@ -230,6 +230,16 @@ def modulo_asientos():
             f_ini = pd.to_datetime(c['Inicio'])
             if f_act < f_ini.replace(day=1): continue
             
+            # Exclusión categórica: Si el contrato venció o fue dado de baja en un mes ANTERIOR al que estamos procesando, no genera asientos.
+            if c.get('Fecha_Baja') and c.get('Estado') in ['Baja', 'Remedido']:
+                f_baja = pd.to_datetime(c['Fecha_Baja'])
+                if f_baja.year < a or (f_baja.year == a and f_baja.month < m_idx):
+                    continue
+            
+            f_fin_c = pd.to_datetime(c['Fin'])
+            if f_fin_c.year < a or (f_fin_c.year == a and f_fin_c.month < m_idx):
+                continue
+            
             tab, vp, rou = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
             if tab.empty or 'Fecha' not in tab.columns: continue
             
@@ -276,6 +286,8 @@ def modulo_asientos():
                 
                 # Diferencia de Cambio calculada al final del proceso mensual para asegurar cuadratura perfecta.
     
+            tc_ini_hist = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
+            
             # Asiento de Baja Definitiva o Remedición Manual
             paso_baja_manual = False
             if c.get('Fecha_Baja') and c['Estado'] in ['Baja', 'Remedido']:
@@ -283,14 +295,14 @@ def modulo_asientos():
                 if f_baja.month == m_idx and f_baja.year == a:
                     paso_baja_manual = True
                     # Calcular saldos al momento del cese/remedición
-                    pasado = tab[tab['Fecha'] <= f_baja]
+                    pasado = tab[tab['Fecha'] <= f_act]
                     if not pasado.empty:
                         tc_baja = obtener_tc_cache(c['Moneda'], f_baja)
                         s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_baja
-                        s_fin_rou = (rou * tc_baja) - amort_acum
+                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
+                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_baja) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
                             if c['Estado'] == 'Remedido':
                                 t_baja = "7. Cierre por Remedición"
                                 # Reversar Pasivo
@@ -298,7 +310,7 @@ def modulo_asientos():
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                                 
                                 # Reversar ROU y Amort
-                                r_neto = (rou * tc_baja)
+                                r_neto = (rou * tc_ini_hist)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 
@@ -312,7 +324,7 @@ def modulo_asientos():
                                 t_baja = "6. Baja Definitiva de Contrato"
                                 if s_fin_pasivo > 0:
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                                r_neto = (rou * tc_baja)
+                                r_neto = (rou * tc_ini_hist)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 dif_baja = s_fin_pasivo - s_fin_rou
@@ -334,19 +346,19 @@ def modulo_asientos():
             f_fin_c = pd.to_datetime(c['Fin'])
             if not paso_baja_manual and not paso_terminacion_parcial and c['Estado'] == 'Activo':
                 if f_fin_c.month == m_idx and f_fin_c.year == a:
-                    pasado = tab[tab['Fecha'] <= f_fin_c]
+                    pasado = tab[tab['Fecha'] <= f_act]
                     if not pasado.empty:
                         tc_baja = obtener_tc_cache(c['Moneda'], f_fin_c)
                         s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_baja
-                        s_fin_rou = (rou * tc_baja) - amort_acum
+                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
+                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_baja) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
                             t_baja = "6. Baja por Término Natural del Contrato"
                             if s_fin_pasivo > 0:
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                             
-                            r_neto = (rou * tc_baja)
+                            r_neto = (rou * tc_ini_hist)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                             
@@ -470,10 +482,13 @@ def modulo_asientos():
             if detalles:
                 df_asientos = pd.DataFrame(detalles)
                 df_asientos.rename(columns={'Cod1': 'ID_Contrato'}, inplace=True)
+                mes_num = str(MESES_LISTA.index(m_saved) + 1).zfill(2)
+                df_asientos.insert(0, 'Periodo', f"{mes_num}-{a_saved}")
                 # Agregar Fila Total al Detalle
                 df_asientos.loc['Total'] = df_asientos.sum(numeric_only=True)
                 df_asientos.at['Total', 'Empresa'] = 'TOTALES'
                 df_asientos.at['Total', 'Cuenta'] = ''
+                df_asientos.at['Total', 'Periodo'] = ''
                 
                 st.dataframe(df_asientos.style.format(precision=0, thousands="."))
                 st.download_button("Exportar Detalle de Asientos (Excel)", to_excel(df_asientos), f"Detalle_Asientos_{m_saved}_{a_saved}.xlsx")
@@ -484,6 +499,8 @@ def modulo_asientos():
             if detalles:
                 df_asientos = pd.DataFrame(detalles)
                 df_resumen = df_asientos.groupby(['Empresa', 'Transacción', 'N° Cuenta', 'Cuenta', 'Tipo']).sum(numeric_only=True).reset_index()
+                mes_num = str(MESES_LISTA.index(m_saved) + 1).zfill(2)
+                df_resumen.insert(0, 'Periodo', f"{mes_num}-{a_saved}")
                 # Fila de cuadratura
                 df_resumen.loc['Total'] = df_resumen.sum(numeric_only=True)
                 df_resumen.at['Total', 'Empresa'] = 'TOTALES'
@@ -491,6 +508,7 @@ def modulo_asientos():
                 df_resumen.at['Total', 'N° Cuenta'] = ''
                 df_resumen.at['Total', 'Cuenta'] = ''
                 df_resumen.at['Total', 'Tipo'] = ''
+                df_resumen.at['Total', 'Periodo'] = ''
                 st.dataframe(df_resumen.style.format(precision=0, thousands="."))
                 st.download_button("Exportar Asientos Resumidos (Excel)", to_excel(df_resumen), f"Resumen_Asientos_{m_saved}_{a_saved}.xlsx")
                 
