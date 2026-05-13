@@ -2034,6 +2034,10 @@ def modulo_auditoria():
         7. **Cálculo de Pasivos No Descontados (Análisis de Vencimientos)** *(Ref. NIIF 16 Párraf. 58 y NIIF 7 Párraf. 39(a))*
         Se utiliza para la nota obligatoria de riesgo de liquidez NIIF 7. Corresponde al sumatorio estricto de todos los desembolsos nominales brutos (`Canon * Tipo_Cambio_Cierre`) cuyas fechas de pago sean posteriores a la fecha de reporte, sin aplicar la tasa de descuento.
         `Pasivo_No_Descontado_Bucket_A = SUMA(Cánones_Futuros_Rango_A) * TC_Cierre`
+        
+        8. **Tratamiento Moneda Extranjera y UF** *(Ref. NIC 21 Párraf. 23)*
+        En contratos indexados (UF) o en otra moneda, el Pasivo se actualiza al valor de cierre por ser una **partida monetaria** (afectando resultados), mientras que el Activo ROU mantiene su valor histórico por ser **no monetario**.
+        `Pasivo = Saldo_Origen * Valor_Cierre` | `ROU = Saldo_Origen * Valor_Histórico`
         ''')
     
     with t2:
