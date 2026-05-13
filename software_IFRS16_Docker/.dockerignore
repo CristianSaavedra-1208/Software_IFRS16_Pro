@@ -1,0 +1,26 @@
+# Entornos Virtuales y Caches
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# --- ¡MUY IMPORTANTE! (Archivos Privados) ---
+generador_licencias.py
+
+# Archivos de la base de datos (El Docker usará el suyo propio)
+ifrs16_platinum.db
+db.sqlite3
+
+# Documentos, manuales y copias de seguridad (No necesarios para producción)
+*_backup.py
+tmp_*.py
+test_*.py
+mock_*.py
+*.docx
+*.md
+*.xlsx
+
+# Git
+.git/
+.gitignore

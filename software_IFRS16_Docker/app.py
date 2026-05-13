@@ -920,7 +920,6 @@ def modulo_notas():
                 # Apply smaller font size style if necessary
                 styled_pas = res_pasivo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
                 st.dataframe(styled_pas, use_container_width=True)
-                st.download_button("Exportar Resumen Pasivos (Excel)", to_excel_formatted(res_pasivo.reset_index()), f"Resumen_Pasivos_{m_saved}_{a_saved}.xlsx")
                 
                 st.subheader("Movimiento de saldos (Horizontal) - Activos ROU")
                 df_act = pd.DataFrame(roll_activo)
@@ -930,7 +929,6 @@ def modulo_notas():
                 
                 styled_act = res_activo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
                 st.dataframe(styled_act, use_container_width=True)
-                st.download_button("Exportar Resumen Activos ROU (Excel)", to_excel_formatted(res_activo.reset_index()), f"Resumen_Activos_{m_saved}_{a_saved}.xlsx")
                 
             else:
                 st.info("No hay datos")
@@ -939,11 +937,11 @@ def modulo_notas():
             if roll_pasivo:
                 st.subheader("Pasivos por Arrendamiento (Detalle)")
                 st.dataframe(df_pas.style.format(precision=0, thousands="."))
-                st.download_button("Exportar Pasivos", to_excel_formatted(df_pas), f"RPasivos_{m_saved}_{a_saved}.xlsx")
+                st.download_button("Exportar Pasivos", to_excel(df_pas), f"RPasivos_{m_saved}_{a_saved}.xlsx")
                 
                 st.subheader("Activos por Derecho de Uso ROU (Detalle)")
                 st.dataframe(df_act.style.format(precision=0, thousands="."))
-                st.download_button("Exportar Activos", to_excel_formatted(df_act), f"RActivos_{m_saved}_{a_saved}.xlsx")
+                st.download_button("Exportar Activos", to_excel(df_act), f"RActivos_{m_saved}_{a_saved}.xlsx")
 
 def modulo_dashboard():
     st.header("🧮 Panel de Saldos")
@@ -1983,7 +1981,7 @@ def modulo_vencimientos():
             
             st.write(f"**Detalle al {f_t_saved.strftime('%d-%m-%Y')} (En M$)**")
             st.dataframe(piv.style.format(precision=0, thousands="."))
-            st.download_button("Exportar Formato (Excel)", to_excel_formatted(piv.reset_index()), f"Nota_Vencimientos_{m_saved}_{a_saved}.xlsx")
+            st.download_button("Exportar Formato (Excel)", to_excel(piv), f"Nota_Vencimientos_{m_saved}_{a_saved}.xlsx")
     
         with t2:
             st.subheader(f"Pasivos {tipo_lbl} (Detallado)")
@@ -1999,7 +1997,8 @@ def modulo_vencimientos():
             piv2 = piv2 / 1000
             st.write(f"**Detalle Contractual al {f_t_saved.strftime('%d-%m-%Y')} (En M$)**")
             st.dataframe(piv2.style.format(precision=0, thousands="."))
-            st.download_button("Exportar Detalle (Excel)", to_excel_formatted(piv2.reset_index()), f"Nota_Venc_Detalle_{m_saved}_{a_saved}.xlsx")
+            st.download_button("Exportar Detalle (Excel)", to_excel(piv2), f"Nota_Venc_Detalle_{m_saved}_{a_saved}.xlsx")
+
 
 def modulo_auditoria():
     st.header("🔍 Auditoría y Transparencia")
@@ -2013,7 +2012,7 @@ def modulo_auditoria():
         1. **Conversión de Tasa de Interés (Tasa Efectiva Mensual)** *(Ref. NIIF 16 Párraf. 26)*
         Se utiliza la fórmula de interés compuesto para hallar la tasa mensual equivalente a partir del input anual:
         `Tasa_Mensual = (1 + Tasa_Anual) ^ (1/12) - 1`
-        *(Nota de Auditoría: El sistema asume que la Tasa Anual ingresada es una Tasa Efectiva (TEA). Para que una validación con la fórmula =VA() de Excel cuadre exactamente, el auditor no debe dividir la tasa anual entre 12 (lo cual sería tratarla como Nominal), sino que debe ingresar el argumento de tasa en Excel como `(1 + Tasa_Anual)^(1/12) - 1`)*
+        *(Nota: Si se desea una validación lineal con calculadoras Excel estándar, se requiere proveer la tasa Nominal y no la Efectiva)*
         
         2. **Cálculo de Valor Presente (VP) - Pagos Vencidos** *(Ref. NIIF 16 Párraf. 26 - Medición inicial del pasivo)*
         `VP = Canon * [1 - (1 + Tasa_Mensual)^(-Plazo)] / Tasa_Mensual`
@@ -2118,18 +2117,13 @@ def _render_integracion_erp():
 def modulo_configuracion():
     st.header("⚙️ Configuración del Sistema")
     
-    rol_actual = st.session_state.get('rol')
-    if rol_actual == 'Ingeniero IT (Técnico)':
+    if st.session_state.get('rol') == 'Ingeniero IT (Técnico)':
         t_it = st.tabs(["Integraciones ERP"])
         with t_it[0]:
             _render_integracion_erp()
         return
         
-    if rol_actual == 'Auditor Ext. / Gerencia (Lector)':
-        opciones = ["Log de Usuario"]
-    else:
-        opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "Mantenimiento BD"]
-        
+    opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "Mantenimiento BD"]
     sel_tab = st.radio("Sección de Configuración", opciones, horizontal=True, key="config_tabs_radio")
     
     if sel_tab == "Usuarios":
@@ -2363,50 +2357,31 @@ def modulo_configuracion():
         st.subheader("Log de Usuario (Logs del Sistema)")
         st.info("Registre y trace todas las acciones operativas realizadas por los usuarios (creación/eliminación de contratos, modificaciones, etc).")
         
-        rol_actual = st.session_state.get('rol')
+        c_tog, c_btn = st.columns([3, 1])
+        estado_actual = is_audit_enabled()
         
-        if rol_actual != 'Auditor Ext. / Gerencia (Lector)':
-            c_tog, c_btn = st.columns([3, 1])
-            estado_actual = is_audit_enabled()
+        with c_tog:
+            nuevo_estado = st.toggle("Activar Registro Automático de Acciones (Auditoría)", value=estado_actual)
             
-            with c_tog:
-                nuevo_estado = st.toggle("Activar Registro Automático de Acciones (Auditoría)", value=estado_actual)
-                
-            if nuevo_estado != estado_actual:
-                if nuevo_estado:
-                    agregar_parametro('AUDIT_LOG_ENABLED', '1')
-                    st.session_state.success_msg = "Log de Usuario ACTIVADO. Todas las alteraciones en Contratos y Parámetros quedarán registradas."
-                else:
-                    eliminar_parametro('AUDIT_LOG_ENABLED', '1')
-                    st.session_state.success_msg = "Bitácora DESACTIVADA."
-                st.rerun()
-                
-            st.markdown("---")
-            if c_btn.button("🔄 Refrescar Visor de Logs", type="primary", use_container_width=True):
-                st.rerun()
-        else:
-            st.markdown("---")
-            if st.button("🔄 Refrescar Visor de Logs", type="primary"):
-                st.rerun()
-                
+        if nuevo_estado != estado_actual:
+            if nuevo_estado:
+                agregar_parametro('AUDIT_LOG_ENABLED', '1')
+                st.session_state.success_msg = "Log de Usuario ACTIVADO. Todas las alteraciones en Contratos y Parámetros quedarán registradas."
+            else:
+                eliminar_parametro('AUDIT_LOG_ENABLED', '1')
+                st.session_state.success_msg = "Bitácora DESACTIVADA."
+            st.rerun()
+            
+        st.markdown("---")
+        if c_btn.button("🔄 Refrescar Visor de Logs", type="primary", use_container_width=True):
+            st.rerun()
+            
         logs_df = obtener_logs()
         if logs_df.empty:
             st.warning("No hay registros en la Bitácora actualmente.")
         else:
             logs_df.rename(columns={'id':'ID_Log', 'fecha_hora':'Fecha/Hora', 'usuario':'Usuario', 'accion': 'Acción Ejecutada', 'entidad_id': 'Contrato / Entidad', 'detalles':'Detalle Extra'}, inplace=True)
             st.dataframe(logs_df, use_container_width=True)
-
-        import os
-        dir_logs = os.path.join("data", "logs_historicos")
-        if os.path.exists(dir_logs):
-            archivos = [f for f in os.listdir(dir_logs) if f.endswith('.xlsx')]
-            if archivos:
-                st.markdown("---")
-                st.subheader("Archivos Históricos Generados Automáticamente")
-                for arch in sorted(archivos, reverse=True):
-                    file_path = os.path.join(dir_logs, arch)
-                    with open(file_path, "rb") as f:
-                        st.download_button(f"📥 Descargar {arch}", data=f, file_name=arch, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"dl_{arch}")
 
     elif sel_tab == "Mantenimiento BD":
         st.subheader("Mantenimiento y Reseteo de Datos")
@@ -3225,7 +3200,7 @@ def main():
         elif rol_actual == 'Analista Financiero (Editor)':
             opciones_menu = [m for m in menus_todas if m not in ['Configuración', 'Auditoría']]
         elif rol_actual == 'Auditor Ext. / Gerencia (Lector)':
-            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Configuración", "Mi Perfil"]
+            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Mi Perfil"]
         elif rol_actual == 'Ingeniero IT (Técnico)':
             opciones_menu = ["Configuración", "Mi Perfil"]
         else:

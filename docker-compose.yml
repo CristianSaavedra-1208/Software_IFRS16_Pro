@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  ifrs16_pro:
+    build: .
+    container_name: ifrs16_pro_app
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      # Vinculamos la base de datos del servidor hacia el interior del contenedor.
+      # IMPORTANTE: El archivo ifrs16_platinum.db DEBE existir en la misma carpeta 
+      # donde está este archivo antes de correr 'docker-compose up -d'
+      - ./ifrs16_platinum.db:/app/ifrs16_platinum.db
+    environment:
+      - TZ=America/Santiago

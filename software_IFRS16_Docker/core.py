@@ -258,17 +258,3 @@ def to_excel(df):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='xlsxwriter') as wr: df.to_excel(wr, index=False)
     return out.getvalue()
-
-def to_excel_formatted(df):
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
-        df.to_excel(wr, index=False)
-        workbook = wr.book
-        worksheet = wr.sheets['Sheet1']
-        num_fmt = workbook.add_format({'num_format': '#,##0'})
-        for i, col in enumerate(df.columns):
-            if pd.api.types.is_numeric_dtype(df[col]):
-                worksheet.set_column(i, i, 18, num_fmt)
-            else:
-                worksheet.set_column(i, i, 20)
-    return out.getvalue()

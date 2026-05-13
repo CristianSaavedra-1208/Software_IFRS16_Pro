@@ -391,38 +391,10 @@ def registrar_log(usuario, accion, entidad_id, detalles=""):
     if not is_audit_enabled():
         return
     import datetime
-    import os
-    import pandas as pd
-    
     conn = conectar()
     fh = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute("INSERT INTO bitacora_auditoria (fecha_hora, usuario, accion, entidad_id, detalles) VALUES (?, ?, ?, ?, ?)",
                  (fh, usuario, accion, str(entidad_id), str(detalles)))
-                 
-    # Rotación Automática
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) as cnt FROM bitacora_auditoria")
-    if c.fetchone()['cnt'] >= 5000:
-        try:
-            df = pd.read_sql("SELECT * FROM bitacora_auditoria ORDER BY id ASC", conn)
-            dir_logs = os.path.join("data", "logs_historicos")
-            if not os.path.exists(dir_logs):
-                os.makedirs(dir_logs)
-                
-            fh_clean = fh.replace(":", "").replace(" ", "_").replace("-", "")
-            file_name = f"Historial_Logs_{fh_clean}.xlsx"
-            file_path = os.path.join(dir_logs, file_name)
-            
-            with pd.ExcelWriter(file_path, engine='xlsxwriter') as wr:
-                df.to_excel(wr, index=False)
-                
-            conn.execute("DELETE FROM bitacora_auditoria")
-            fh_post = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            conn.execute("INSERT INTO bitacora_auditoria (fecha_hora, usuario, accion, entidad_id, detalles) VALUES (?, ?, ?, ?, ?)",
-                         (fh_post, "Sistema", "ROTACION_LOGS", "Base de Datos", f"Rotación automática exitosa. Logs guardados en {file_name}"))
-        except Exception:
-            pass
-            
     conn.commit()
     conn.close()
 
