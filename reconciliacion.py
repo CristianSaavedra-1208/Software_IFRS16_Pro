@@ -64,6 +64,7 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
             past = tab[tab['Fecha'] <= f_t]
             if not past.empty and not es_baja:
                 tc = obtener_tc_cache(c['Moneda'], f_t)
+                tc_ini_hist = obtener_tc_cache(c['Moneda'], c['Inicio'])
                 v_act = past.iloc[-1]['S_Fin_Orig']
                 
                 futuros = tab[tab['Fecha'] > f_t].copy()
@@ -95,8 +96,9 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                         if abs(jump_rou_uf) > 0.01: r_bruto_uf += jump_rou_uf
                         
                 tc_act = tc if tc > 0 else 1.0
-                r_bruto = r_bruto_uf * tc_act # Requerimiento PwC: ROU remedido a UF actual
-                a_acum = past['Dep_Orig'].sum() * tc_act # Requerimiento PwC
+                tc_rou = tc_act if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
+                r_bruto = r_bruto_uf * tc_rou # PwC/NIIF 16 para UF. NIC 21 (Histórico) para USD.
+                a_acum = past['Dep_Orig'].sum() * tc_rou
                 
                 rou_bruto_tot += r_bruto
                 amort_acum_tot += a_acum
