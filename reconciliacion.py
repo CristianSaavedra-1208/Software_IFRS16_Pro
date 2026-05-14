@@ -77,16 +77,12 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                     v_cor_sum = futuros.loc[es_corriente, 'Capital'].sum()
                     
                 v12 = v_act - v_cor_sum
-                tc_ini = float(c['Valor_Moneda_Inicio']) if float(c.get('Valor_Moneda_Inicio', 1)) > 0 else 1.0
-                r_bruto = rou * tc_ini
+                r_bruto_uf = rou
                 
                 rems = rems_grupos.get(c['Codigo_Interno'], [])
                 for r in rems:
                     f_r = pd.to_datetime(r['Fecha_Remedicion'])
                     if f_r <= f_t:
-                        tc_rem = obtener_tc_cache(c['Moneda'], f_r)
-                        if tc_rem == 0: tc_rem = 1.0
-                        
                         past_r = tab[tab['Fecha'] < f_r]
                         fut_r = tab[tab['Fecha'] >= f_r]
                         old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
@@ -95,10 +91,12 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                         baja_r = r.get('Baja_ROU', 0.0)
                         
                         jump_rou_uf = new_pasivo - (old_pasivo - baja_p)
-                        if baja_r > 0: r_bruto -= (baja_r * tc_ini)
-                        if abs(jump_rou_uf) > 0.01: r_bruto += (jump_rou_uf * tc_rem)
+                        if baja_r > 0: r_bruto_uf -= baja_r
+                        if abs(jump_rou_uf) > 0.01: r_bruto_uf += jump_rou_uf
                         
-                a_acum = past['Dep_Orig'].sum() * tc_ini
+                tc_act = tc if tc > 0 else 1.0
+                r_bruto = r_bruto_uf * tc_act # Requerimiento PwC: ROU remedido a UF actual
+                a_acum = past['Dep_Orig'].sum() * tc_act # Requerimiento PwC
                 
                 rou_bruto_tot += r_bruto
                 amort_acum_tot += a_acum

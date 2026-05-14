@@ -239,7 +239,9 @@ def modulo_asientos():
             'Interes': (obtener_parametros('CUENTA_GASTO_INT_NUM')[0] if obtener_parametros('CUENTA_GASTO_INT_NUM') else '4201', obtener_parametros('CUENTA_GASTO_INT_NOM')[0] if obtener_parametros('CUENTA_GASTO_INT_NOM') else 'Gasto Interés'),
             'Banco': (obtener_parametros('CUENTA_BANCO_PAGO_NUM')[0] if obtener_parametros('CUENTA_BANCO_PAGO_NUM') else '1102', obtener_parametros('CUENTA_BANCO_PAGO_NOM')[0] if obtener_parametros('CUENTA_BANCO_PAGO_NOM') else 'Banco Efectivo'),
             'Perdida': (obtener_parametros('CUENTA_PERDIDA_TC_NUM')[0] if obtener_parametros('CUENTA_PERDIDA_TC_NUM') else '4301', obtener_parametros('CUENTA_PERDIDA_TC_NOM')[0] if obtener_parametros('CUENTA_PERDIDA_TC_NOM') else 'Pérdida TC'),
-            'Ganancia': (obtener_parametros('CUENTA_GANANCIA_TC_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NUM') else '4302', obtener_parametros('CUENTA_GANANCIA_TC_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NOM') else 'Ganancia TC')
+            'Ganancia': (obtener_parametros('CUENTA_GANANCIA_TC_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NUM') else '4302', obtener_parametros('CUENTA_GANANCIA_TC_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NOM') else 'Ganancia TC'),
+            'PerdidaBaja': (obtener_parametros('CUENTA_PERDIDA_BAJA_NUM')[0] if obtener_parametros('CUENTA_PERDIDA_BAJA_NUM') else '4401', obtener_parametros('CUENTA_PERDIDA_BAJA_NOM')[0] if obtener_parametros('CUENTA_PERDIDA_BAJA_NOM') else 'Otros Gastos (Pérdida por Baja)'),
+            'GananciaBaja': (obtener_parametros('CUENTA_GANANCIA_BAJA_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_BAJA_NUM') else '4402', obtener_parametros('CUENTA_GANANCIA_BAJA_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_BAJA_NOM') else 'Otros Ingresos (Utilidad por Baja)')
         }
         
         import unicodedata
@@ -252,7 +254,8 @@ def modulo_asientos():
             ('ROU', 'CUENTA_ROU'), ('Pasivo', 'CUENTA_PASIVO'), ('Ajuste', 'CUENTA_BCO_AJUSTE'),
             ('Amort', 'CUENTA_GASTO_AMORT'), ('AmortAcum', 'CUENTA_AMORT_ACUM'), 
             ('Interes', 'CUENTA_GASTO_INT'), ('Banco', 'CUENTA_BANCO_PAGO'),
-            ('Perdida', 'CUENTA_PERDIDA_TC'), ('Ganancia', 'CUENTA_GANANCIA_TC')
+            ('Perdida', 'CUENTA_PERDIDA_TC'), ('Ganancia', 'CUENTA_GANANCIA_TC'),
+            ('PerdidaBaja', 'CUENTA_PERDIDA_BAJA'), ('GananciaBaja', 'CUENTA_GANANCIA_BAJA')
         ]:
             mapas_clases[cta_key] = {}
             for cls in obtener_parametros('CLASE_ACTIVO'):
@@ -312,8 +315,9 @@ def modulo_asientos():
                 ratio_ant = tc_ant
                 
                 t_amo = "2. Amortización"
-                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('Amort', c_cls), it['Dep_Orig'] * tc_ini, 0)
-                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('AmortAcum', c_cls), 0, it['Dep_Orig'] * tc_ini)
+                tc_act_amo = tc_act if tc_act > 0 else 1.0
+                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('Amort', c_cls), it['Dep_Orig'] * tc_act_amo, 0)
+                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('AmortAcum', c_cls), 0, it['Dep_Orig'] * tc_act_amo)
                 
                 t_pag = "3. Pago de Arriendo ROU"
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_pag, *get_cta('Pasivo', c_cls), it['Pago_Orig'] * ratio_act, 0)
@@ -338,10 +342,10 @@ def modulo_asientos():
                     if not pasado.empty:
                         tc_baja = obtener_tc_cache(c['Moneda'], f_baja)
                         s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
-                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
+                        amort_acum = pasado['Dep_Orig'].sum() * tc_baja # Requerimiento PwC: Usar tc_baja
+                        s_fin_rou = (rou * tc_baja) - amort_acum
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(rou * tc_baja) > 0.01:
                             if c['Estado'] == 'Remedido':
                                 t_baja = "7. Cierre por Remedición"
                                 # Reversar Pasivo
@@ -349,7 +353,7 @@ def modulo_asientos():
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                                 
                                 # Reversar ROU y Amort
-                                r_neto = (rou * tc_ini_hist)
+                                r_neto = (rou * tc_baja)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 
@@ -363,14 +367,14 @@ def modulo_asientos():
                                 t_baja = "6. Baja Definitiva de Contrato"
                                 if s_fin_pasivo > 0:
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                                r_neto = (rou * tc_ini_hist)
+                                r_neto = (rou * tc_baja) # Requerimiento PwC
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 dif_baja = s_fin_pasivo - s_fin_rou
                                 if dif_baja > 0:
-                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Ganancia', c_cls), 0, dif_baja)
+                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('GananciaBaja', c_cls), 0, dif_baja)
                                 elif dif_baja < 0:
-                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Perdida', c_cls), abs(dif_baja), 0)
+                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('PerdidaBaja', c_cls), abs(dif_baja), 0)
     
             # Verificar si hubo una Terminación Parcial (Reducción) en el mismo mes que anule la Baja Natural
             paso_terminacion_parcial = False
@@ -389,23 +393,23 @@ def modulo_asientos():
                     if not pasado.empty:
                         tc_baja = obtener_tc_cache(c['Moneda'], f_fin_c)
                         s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
-                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
+                        amort_acum = pasado['Dep_Orig'].sum() * tc_baja # Requerimiento PwC
+                        s_fin_rou = (rou * tc_baja) - amort_acum
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(rou * tc_baja) > 0.01:
                             t_baja = "6. Baja por Término Natural del Contrato"
                             if s_fin_pasivo > 0:
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                             
-                            r_neto = (rou * tc_ini_hist)
+                            r_neto = (rou * tc_baja) # Requerimiento PwC
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                             
                             dif_baja = s_fin_pasivo - s_fin_rou
                             if dif_baja > 0:
-                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Ganancia', c_cls), 0, dif_baja)
+                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('GananciaBaja', c_cls), 0, dif_baja)
                             elif dif_baja < 0:
-                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Perdida', c_cls), abs(dif_baja), 0)
+                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('PerdidaBaja', c_cls), abs(dif_baja), 0)
 
             # Asiento de Ajuste por Remedición
             rems = rems_grupos.get(c['Codigo_Interno'], [])
@@ -428,7 +432,7 @@ def modulo_asientos():
                     if baja_p > 0 or baja_r > 0:
                         t_term = "7.a Terminación Parcial (Reducción de Alcance)"
                         bp_clp = baja_p * tc_rem
-                        br_clp = baja_r * tc_ini
+                        br_clp = baja_r * tc_rem # Requerimiento PwC: ROU usa tc_rem
                         
                         # Calcular el diferencial matemático en CLP absoluto para cuadratura perfecta
                         pl_efecto_clp_real = bp_clp - br_clp
@@ -437,9 +441,9 @@ def modulo_asientos():
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('ROU', c_cls), 0, br_clp)
                         
                         if pl_efecto_clp_real > 0:
-                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('Ganancia', c_cls), 0, pl_efecto_clp_real)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('GananciaBaja', c_cls), 0, pl_efecto_clp_real)
                         elif pl_efecto_clp_real < 0:
-                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('Perdida', c_cls), abs(pl_efecto_clp_real), 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('PerdidaBaja', c_cls), abs(pl_efecto_clp_real), 0)
                             
                         old_pasivo -= baja_p
                     
@@ -486,13 +490,13 @@ def modulo_asientos():
                 reajuste = target_balance - saldo_libro
                 
                 if abs(reajuste) > 1.0:
-                    t_tc = "5. Diferencia de Cambio"
+                    t_tc = "5. Diferencia de Cambio (Remedición ROU)"
                     if reajuste > 0: 
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Perdida', c_cls), reajuste, 0)
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), reajuste, 0)
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), 0, reajuste)
                     else:
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), abs(reajuste), 0)
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Ganancia', c_cls), 0, abs(reajuste))
+                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), 0, abs(reajuste))
 
         # --- PLUG DE REDONDEO (CUENTA AJUSTES 1101) ---
         total_debe = round(sum(d.get('Debe', 0) for d in detalles))
@@ -792,8 +796,8 @@ def modulo_notas():
             r_ant_pasivo = tc_ant 
             
             tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-            r_act_rou = tc_ini
-            r_ant_rou = tc_ini
+            r_act_rou = tc_act # Requerimiento PwC: ROU usa UF actual
+            r_ant_rou = tc_ant # Requerimiento PwC
             
             f_ini_c = pd.to_datetime(c['Inicio'])
             fue_adicionado = (f_ini_c.year == a)
@@ -1023,7 +1027,7 @@ def modulo_dashboard():
                     v12 = v_act - v_cor_sum 
                     
                     tc_ini = float(c['Valor_Moneda_Inicio']) if float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    rou_bruto = rou * tc_ini
+                    rou_bruto_uf = rou
                     
                     # Using the preloaded rems_grupos cache to prevent N+1 queries
                     rems = rems_grupos.get(c['Codigo_Interno'], [])
@@ -1039,16 +1043,11 @@ def modulo_dashboard():
                          f_r_last = pd.to_datetime(last_rem['Fecha_Remedicion'])
                          fut_r_last = tab[tab['Fecha'] >= f_r_last]
                          n_rou_orig = fut_r_last.iloc[0]['S_Ini_Orig'] if not fut_r_last.empty else 0.0
-                         tc_rem_last = obtener_tc_cache(c['Moneda'], f_r_last)
-                         if tc_rem_last == 0: tc_rem_last = 1.0
-                         n_rou = n_rou_orig * tc_rem_last
+                         n_rou = n_rou_orig * ratio_pasivo # Requerimiento PwC
                          
                     for r in rems:
                         f_r = pd.to_datetime(r['Fecha_Remedicion'])
                         if f_r <= f_t:
-                            tc_rem = obtener_tc_cache(c['Moneda'], f_r)
-                            if tc_rem == 0: tc_rem = 1.0
-                            
                             past_r = tab[tab['Fecha'] < f_r]
                             fut_r = tab[tab['Fecha'] >= f_r]
                             old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
@@ -1061,16 +1060,17 @@ def modulo_dashboard():
                             jump_rou_uf = new_pasivo - old_pasivo_adjusted
                             
                             if baja_r > 0:
-                                rou_bruto -= (baja_r * tc_ini)
+                                rou_bruto_uf -= baja_r
                             
                             if abs(jump_rou_uf) > 0.01:
-                                rou_bruto += (jump_rou_uf * tc_rem)
+                                rou_bruto_uf += jump_rou_uf
 
+                    rou_bruto = rou_bruto_uf * ratio_pasivo # PwC
                     amort_acum = past['Dep_Orig'].sum()
-                    amort_clp = amort_acum * tc_ini
+                    amort_clp = amort_acum * ratio_pasivo # PwC
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
-                    dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * tc_ini
+                    dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * ratio_pasivo # PwC
                     
                     if es_baja_ejercicio:
                         v_act = 0
@@ -2327,7 +2327,9 @@ def modulo_configuracion():
             ('CUENTA_GASTO_INT', 'Gasto Interés (Costo Fin.)'), 
             ('CUENTA_BANCO_PAGO', 'Banco Efectivo (Pago)'), 
             ('CUENTA_PERDIDA_TC', 'Pérdida por Tipo de Cambio'), 
-            ('CUENTA_GANANCIA_TC', 'Ganancia por Tipo de Cambio')
+            ('CUENTA_GANANCIA_TC', 'Ganancia por Tipo de Cambio'),
+            ('CUENTA_PERDIDA_BAJA', 'Pérdida por Término de Contrato'),
+            ('CUENTA_GANANCIA_BAJA', 'Ganancia por Término de Contrato')
         ]
         with st.form("fc_cuentas"):
             n_vals = []
