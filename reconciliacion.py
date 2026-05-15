@@ -96,9 +96,64 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                         if abs(jump_rou_uf) > 0.01: r_bruto_uf += jump_rou_uf
                         
                 tc_act = tc if tc > 0 else 1.0
-                tc_rou = tc_act if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
-                r_bruto = r_bruto_uf * tc_rou # PwC/NIIF 16 para UF. NIC 21 (Histórico) para USD.
-                a_acum = past['Dep_Orig'].sum() * tc_rou
+                if c['Moneda'] in ['UF', 'CLP']:
+                    # Requerimiento: El ROU hereda el reajuste del Pasivo. Cuadrar con Roll-Forward (app.py)
+                    a_eval = a
+                    f_dic_ant = pd.to_datetime(f"{a_eval-1}-12-31")
+                    last_uf = obtener_tc_cache(c['Moneda'], f_dic_ant)
+                    f_ini_c = pd.to_datetime(c['Inicio'])
+                    fue_adicionado = (f_ini_c.year == a_eval)
+                    
+                    past_ant = tab[tab['Fecha'] <= f_dic_ant]
+                    if fue_adicionado:
+                        s_ini_p = 0
+                        s_ini_rou = 0
+                    else:
+                        s_ini_p = (past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0) * last_uf
+                        s_ini_rou = (rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)) * last_uf
+                        
+                    curr_ytd = tab[(tab['Fecha'].dt.year == a_eval) & (tab['Fecha'] <= f_t)]
+                    tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
+                    
+                    adic_p = vp * tc_ini if fue_adicionado else 0
+                    adic_rou = rou * tc_ini if fue_adicionado else 0
+                    
+                    interes = (curr_ytd['Int_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
+                    pagos = (curr_ytd['Pago_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
+                    amortizacion = (curr_ytd['Dep_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
+                    
+                    rem_p = 0; rem_a = 0
+                    for r in rems:
+                        f_r = pd.to_datetime(r['Fecha_Remedicion'])
+                        if f_r.year == a_eval and f_r <= f_t:
+                            jump_p = r.get('Jump_Pasivo', 0)
+                            jump_a = r.get('Jump_ROU', 0)
+                            if jump_p > 0: rem_p += jump_p * tc_act
+                            if jump_a > 0: rem_a += jump_a * tc_act
+                            
+                    s_fin_p = v_act * tc_act
+                    
+                    f_fin_date = pd.to_datetime(c['Fin'])
+                    es_baja = False
+                    if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                        f_b = pd.to_datetime(c['Fecha_Baja'])
+                        if f_b.year == a_eval and f_b <= f_t:
+                            es_baja = True
+                    elif f_fin_date.year == a_eval and f_fin_date <= f_t:
+                        es_baja = True
+                            
+                    if es_baja:
+                        r_bruto = 0
+                        a_acum = 0
+                    else:
+                        reajuste_p = s_fin_p - s_ini_p - adic_p - interes + pagos - rem_p
+                        rou_neto_calc = s_ini_rou + adic_rou + rem_a + reajuste_p - amortizacion
+                        a_acum = past['Dep_Orig'].sum() * tc_act
+                        r_bruto = rou_neto_calc + a_acum
+                else:
+                    tc_rou = tc_ini_hist
+                    r_bruto = r_bruto_uf * tc_rou
+                    a_acum = past['Dep_Orig'].sum() * tc_rou
                 
                 rou_bruto_tot += r_bruto
                 amort_acum_tot += a_acum

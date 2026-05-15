@@ -889,9 +889,7 @@ def modulo_notas():
                 elif f_baja_real.year == a and f_baja_real.month <= m_idx:
                     es_baja = True
                     bajas_p = -s_fin_real
-                    bajas_a = -s_fin_rou_real
                     s_fin_real = 0
-                    s_fin_rou_real = 0
                     
             # 6. Recalcular la Diferencia de Cambio como "Plug" (Cuadratura Perfecta)
             # Puente Teórico = S_Ini + Adiciones + Interes - Pagos + Rem_P + Dif_Cambio = S_Fin
@@ -902,7 +900,11 @@ def modulo_notas():
             reajuste_rou = reajuste if c['Moneda'] in ['UF', 'CLP'] else 0
             
             # Recalcular el Saldo Final del ROU forzando el arrastre perfecto
-            s_fin_rou_real = s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion + bajas_a
+            if es_baja:
+                bajas_a = -(s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion)
+                s_fin_rou_real = 0
+            else:
+                s_fin_rou_real = s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion + bajas_a
             if rems:
                 last_rem = rems[-1]
                 n_can, n_tas, n_plaz, n_fin = last_rem['Canon'], last_rem['Tasa']*100, last_rem['Plazo'], last_rem['Fin']
@@ -1078,13 +1080,60 @@ def modulo_dashboard():
                             if abs(jump_rou_uf) > 0.01:
                                 rou_bruto_uf += jump_rou_uf
 
-                    rou_bruto = rou_bruto_uf * ratio_pasivo # PwC
-                    amort_acum = past['Dep_Orig'].sum()
-                    amort_clp = amort_acum * ratio_pasivo # PwC
+                    if c['Moneda'] in ['UF', 'CLP']:
+                        f_dic_ant = pd.to_datetime(f"{a-1}-12-31")
+                        last_uf = obtener_tc_cache(c['Moneda'], f_dic_ant)
+                        f_ini_c = pd.to_datetime(c['Inicio'])
+                        fue_adicionado = (f_ini_c.year == a)
+                        
+                        past_ant = tab[tab['Fecha'] <= f_dic_ant]
+                        if fue_adicionado:
+                            s_ini_p = 0
+                            s_ini_rou = 0
+                        else:
+                            s_ini_p = (past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0) * last_uf
+                            s_ini_rou = (rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)) * last_uf
+                            
+                        curr_ytd = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'] <= f_t)]
+                        adic_p = vp * tc_ini if fue_adicionado else 0
+                        adic_rou = rou * tc_ini if fue_adicionado else 0
+                        
+                        interes = (curr_ytd['Int_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
+                        pagos = (curr_ytd['Pago_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
+                        amortizacion = (curr_ytd['Dep_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
+                        
+                        rem_p = 0; rem_a = 0
+                        for r in rems:
+                            f_r = pd.to_datetime(r['Fecha_Remedicion'])
+                            if f_r.year == a and f_r <= f_t:
+                                jump_p = r.get('Jump_Pasivo', 0)
+                                jump_a = r.get('Jump_ROU', 0)
+                                if jump_p > 0: rem_p += jump_p * ratio_pasivo
+                                if jump_a > 0: rem_a += jump_a * ratio_pasivo
+                                
+                        s_fin_p = v_act * ratio_pasivo
+                        reajuste_p = s_fin_p - s_ini_p - adic_p - interes + pagos - rem_p
+                        
+                        rou_neto_calc = s_ini_rou + adic_rou + rem_a + reajuste_p - amortizacion
+                        amort_clp = past['Dep_Orig'].sum() * ratio_pasivo
+                        rou_bruto = rou_neto_calc + amort_clp
+                    else:
+                        rou_bruto = rou_bruto_uf * ratio_pasivo
+                        amort_clp = past['Dep_Orig'].sum() * ratio_pasivo
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
                     dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * ratio_pasivo # PwC
                     
+                    f_fin_date = pd.to_datetime(c['Fin']).date()
+                    f_t_date = f_t.date()
+                    es_baja_ejercicio = False
+                    if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                        f_b = pd.to_datetime(c['Fecha_Baja']).date()
+                        if f_b.year == a and f_b <= f_t_date:
+                            es_baja_ejercicio = True
+                    elif f_fin_date.year == a and f_fin_date <= f_t_date:
+                        es_baja_ejercicio = True
+                        
                     if es_baja_ejercicio:
                         v_act = 0
                         v_cor_sum = 0
@@ -1092,12 +1141,9 @@ def modulo_dashboard():
                         rou_bruto = 0
                         amort_clp = 0
                         rou = 0
-
+                        
                     item_dict = {}
                     
-                    # 1. Estado de Vigencia al Corte
-                    f_fin_date = pd.to_datetime(c['Fin']).date()
-                    f_t_date = f_t.date()
                     if c.get('Estado') == 'Baja' and c.get('Fecha_Baja'):
                         estado_vig = '🚨 Dado de Baja'
                         estado_real = 'Dado de Baja'
