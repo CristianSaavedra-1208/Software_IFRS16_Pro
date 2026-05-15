@@ -311,6 +311,7 @@ def modulo_asientos():
                     tc_ant = obtener_tc_cache(c['Moneda'], f_ant)
                     
                 tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
+                tc_ini_hist = tc_ini
                 ratio_act = tc_act
                 ratio_ant = tc_ant
                 
@@ -329,7 +330,7 @@ def modulo_asientos():
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_int, *get_cta('Pasivo', c_cls), 0, it['Int_Orig'] * ratio_act)
                 
                 # Diferencia de Cambio calculada al final del proceso mensual para asegurar cuadratura perfecta.
-    
+            
             tc_ini_hist = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
             
             # Asiento de Baja Definitiva o Remedición Manual
