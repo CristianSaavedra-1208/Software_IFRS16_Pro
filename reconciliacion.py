@@ -64,9 +64,14 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
             past = tab[tab['Fecha'] <= f_t]
             if not past.empty and not es_baja:
                 tc = obtener_tc_cache(c['Moneda'], f_t)
-                tc_ini_hist = obtener_tc_cache(c['Moneda'], c['Inicio'])
-                v_act = past.iloc[-1]['S_Fin_Orig']
+                # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                from core import simular_libro_mayor
+                tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+                if tc_ini_hist <= 0: tc_ini_hist = 1.0
+                rems = rems_grupos.get(c['Codigo_Interno'], [])
+                r_bruto, a_acum, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
                 
+                v_act = past.iloc[-1]['S_Fin_Orig']
                 futuros = tab[tab['Fecha'] > f_t].copy()
                 v_cor_sum = 0
                 if not futuros.empty:
@@ -78,82 +83,23 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                     v_cor_sum = futuros.loc[es_corriente, 'Capital'].sum()
                     
                 v12 = v_act - v_cor_sum
-                r_bruto_uf = rou
                 
-                rems = rems_grupos.get(c['Codigo_Interno'], [])
-                for r in rems:
-                    f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                    if f_r <= f_t:
-                        past_r = tab[tab['Fecha'] < f_r]
-                        fut_r = tab[tab['Fecha'] >= f_r]
-                        old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
-                        new_pasivo = fut_r.iloc[0]['S_Ini_Orig'] if not fut_r.empty else 0.0
-                        baja_p = r.get('Baja_Pasivo', 0.0)
-                        baja_r = r.get('Baja_ROU', 0.0)
-                        
-                        jump_rou_uf = new_pasivo - (old_pasivo - baja_p)
-                        if baja_r > 0: r_bruto_uf -= baja_r
-                        if abs(jump_rou_uf) > 0.01: r_bruto_uf += jump_rou_uf
-                        
-                tc_act = tc if tc > 0 else 1.0
-                if c['Moneda'] in ['UF', 'CLP']:
-                    # Requerimiento: El ROU hereda el reajuste del Pasivo. Cuadrar con Roll-Forward (app.py)
-                    a_eval = a
-                    f_dic_ant = pd.to_datetime(f"{a_eval-1}-12-31")
-                    last_uf = obtener_tc_cache(c['Moneda'], f_dic_ant)
-                    f_ini_c = pd.to_datetime(c['Inicio'])
-                    fue_adicionado = (f_ini_c.year == a_eval)
-                    
-                    past_ant = tab[tab['Fecha'] <= f_dic_ant]
-                    if fue_adicionado:
-                        s_ini_p = 0
-                        s_ini_rou = 0
-                    else:
-                        s_ini_p = (past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0) * last_uf
-                        s_ini_rou = (rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)) * last_uf
-                        
-                    curr_ytd = tab[(tab['Fecha'].dt.year == a_eval) & (tab['Fecha'] <= f_t)]
-                    tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    
-                    adic_p = vp * tc_ini if fue_adicionado else 0
-                    adic_rou = rou * tc_ini if fue_adicionado else 0
-                    
-                    interes = (curr_ytd['Int_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
-                    pagos = (curr_ytd['Pago_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
-                    amortizacion = (curr_ytd['Dep_Orig'] * tc_act).sum() if not curr_ytd.empty else 0
-                    
-                    rem_p = 0; rem_a = 0
-                    for r in rems:
-                        f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                        if f_r.year == a_eval and f_r <= f_t:
-                            jump_p = r.get('Jump_Pasivo', 0)
-                            jump_a = r.get('Jump_ROU', 0)
-                            if jump_p > 0: rem_p += jump_p * tc_act
-                            if jump_a > 0: rem_a += jump_a * tc_act
-                            
-                    s_fin_p = v_act * tc_act
-                    
-                    f_fin_date = pd.to_datetime(c['Fin'])
-                    es_baja = False
-                    if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
-                        f_b = pd.to_datetime(c['Fecha_Baja'])
-                        if f_b.year == a_eval and f_b <= f_t:
-                            es_baja = True
-                    elif f_fin_date.year == a_eval and f_fin_date <= f_t:
+                # Bajas definitivas
+                f_fin_date = pd.to_datetime(c['Fin'])
+                es_baja = False
+                if f_fin_date.year < f_t.year or (f_fin_date.year == f_t.year and f_fin_date.month <= f_t.month):
+                    if not (c.get('Fecha_Baja') and c['Estado'] == 'Baja' and pd.to_datetime(c['Fecha_Baja']) > f_t):
                         es_baja = True
-                            
-                    if es_baja:
-                        r_bruto = 0
-                        a_acum = 0
-                    else:
-                        reajuste_p = s_fin_p - s_ini_p - adic_p - interes + pagos - rem_p
-                        rou_neto_calc = s_ini_rou + adic_rou + rem_a + reajuste_p - amortizacion
-                        a_acum = past['Dep_Orig'].sum() * tc_act
-                        r_bruto = rou_neto_calc + a_acum
-                else:
-                    tc_rou = tc_ini_hist
-                    r_bruto = r_bruto_uf * tc_rou
-                    a_acum = past['Dep_Orig'].sum() * tc_rou
+                        
+                if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                    f_b = pd.to_datetime(c['Fecha_Baja'])
+                    if f_b.year < f_t.year or (f_b.year == f_t.year and f_b.month <= f_t.month):
+                        es_baja = True
+                        
+                if es_baja:
+                    v_act = 0
+                    v_cor_sum = 0
+                    v12 = 0
                 
                 rou_bruto_tot += r_bruto
                 amort_acum_tot += a_acum

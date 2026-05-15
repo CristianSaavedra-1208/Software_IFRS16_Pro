@@ -338,16 +338,16 @@ def modulo_asientos():
                 f_baja = pd.to_datetime(c['Fecha_Baja'])
                 if f_baja.month == m_idx and f_baja.year == a:
                     paso_baja_manual = True
-                    # Calcular saldos al momento del cese/remedición
-                    pasado = tab[tab['Fecha'] <= f_act]
-                    if not pasado.empty:
-                        tc_baja = obtener_tc_cache(c['Moneda'], f_baja)
-                        tc_rou_baja = tc_baja if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
-                        s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_rou_baja
-                        s_fin_rou = (rou * tc_rou_baja) - amort_acum
+                    # Calcular saldos exactos históricos just antes de la baja
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    if True:
+                        s_fin_pasivo = p_hist
+                        amort_acum = aa_hist
+                        s_fin_rou = rb_hist - aa_hist
+                        r_neto = rb_hist
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_rou_baja) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(r_neto) > 0.01:
                             if c['Estado'] == 'Remedido':
                                 t_baja = "7. Cierre por Remedición"
                                 # Reversar Pasivo
@@ -355,7 +355,6 @@ def modulo_asientos():
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                                 
                                 # Reversar ROU y Amort
-                                r_neto = (rou * tc_rou_baja)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 
@@ -369,7 +368,6 @@ def modulo_asientos():
                                 t_baja = "6. Baja Definitiva de Contrato"
                                 if s_fin_pasivo > 0:
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                                r_neto = (rou * tc_rou_baja)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 dif_baja = s_fin_pasivo - s_fin_rou
@@ -389,19 +387,18 @@ def modulo_asientos():
 
             if not paso_baja_manual and not paso_terminacion_parcial and c['Estado'] == 'Activo':
                 if f_fin_c.month == m_idx and f_fin_c.year == a:
-                    pasado = tab[tab['Fecha'] <= f_act]
-                    if not pasado.empty:
-                        tc_baja = obtener_tc_cache(c['Moneda'], f_fin_c)
-                        tc_rou_baja = tc_baja if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
-                        s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_rou_baja
-                        s_fin_rou = (rou * tc_rou_baja) - amort_acum
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    if True:
+                        s_fin_pasivo = p_hist
+                        amort_acum = aa_hist
+                        s_fin_rou = rb_hist - aa_hist
+                        r_neto = rb_hist
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_rou_baja) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(r_neto) > 0.01:
                             t_baja = "6. Baja por Término Natural del Contrato"
                             if s_fin_pasivo > 0:
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                            r_neto = (rou * tc_rou_baja)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                             dif_baja = s_fin_pasivo - s_fin_rou
@@ -808,47 +805,39 @@ def modulo_notas():
             r_act_rou = tc_act # Requerimiento PwC: ROU usa UF actual
             r_ant_rou = tc_ant # Requerimiento PwC
             
+            from core import simular_libro_mayor
             f_ini_c = pd.to_datetime(c['Inicio'])
             fue_adicionado = (f_ini_c.year == a)
-            
-            # Saldo Inicial (Cierre del año anterior YTD)
-            past_ant = tab[tab['Fecha'] <= f_ant]
-            if fue_adicionado:
-                s_ini = 0
-                s_ini_rou = 0
-                s_ini_orig = 0
-                s_ini_rou_orig = 0
-            else:
-                s_ini_orig = past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0
-                s_ini = s_ini_orig * r_ant_pasivo
-                
-                s_ini_rou_orig = rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)
-                s_ini_rou = s_ini_rou_orig * r_ant_rou
-            
-            # Reconocimiento Inicial (Adiciones YTD)
-            if fue_adicionado:
-                adic_pasivo = vp * tc_ini
-                adic_rou = rou * tc_ini
-            else:
-                adic_pasivo = 0
-                adic_rou = 0
-                
-            # Movimientos del año (YTD) hasta el mes seleccionado
-            curr = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'].dt.month <= m_idx)]
-            interes = curr['Int_Orig'].sum() * r_act_pasivo if not curr.empty else 0
-            pagos = curr['Pago_Orig'].sum() * r_act_pasivo if not curr.empty else 0
-            amortizacion = curr['Dep_Orig'].sum() * r_act_rou if not curr.empty else 0
-            
-            # 4. Modificadores (Bajas, Remediciones) 
+            tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+            if tc_ini_hist <= 0: tc_ini_hist = 1.0
             rems = rems_grupos.get(c['Codigo_Interno'], [])
-            bajas_p, bajas_a = 0, 0
-            rem_p, rem_a = 0, 0
             
-            # Las remediciones sumarán el valor del ajuste ROU inyectado en ese periodo
+            rb_ini, a_acum_ini, p_ini = simular_libro_mayor(c, tab, f_ant, rems, tc_ini_hist, vp, rou)
+            rb_fin, a_acum_fin, p_fin = simular_libro_mayor(c, tab, f_act, rems, tc_ini_hist, vp, rou)
+            
+            s_ini = p_ini
+            s_ini_rou = rb_ini - a_acum_ini
+            s_fin_real = p_fin
+            s_fin_rou_real = rb_fin - a_acum_fin
+            
+            adic_pasivo = vp * tc_ini_hist if fue_adicionado else 0
+            adic_rou = rou * tc_ini_hist if fue_adicionado else 0
+            
+            curr = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'] <= f_act)]
+            interes = 0; pagos = 0; amortizacion = 0
+            if not curr.empty:
+                for idx, row in curr.iterrows():
+                    f_mes = pd.to_datetime(date(row['Fecha'].year, row['Fecha'].month, 1)) + relativedelta(day=31)
+                    tc_mes = obtener_tc_cache(c['Moneda'], f_mes)
+                    if tc_mes == 0: tc_mes = 1.0
+                    interes += row['Int_Orig'] * tc_mes
+                    pagos += row['Pago_Orig'] * tc_mes
+                    amortizacion += row['Dep_Orig'] * (tc_mes if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist)
+                    
+            rem_p = 0; rem_a = 0; bajas_p = 0
             for r in rems:
                 f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                # Filtramos que haya ocurrido en el YTD hasta el mes evaluado
-                if f_r.year == a and f_r.month <= m_idx:
+                if f_r.year == a and f_r <= f_act:
                     past_tab_rem = tab[tab['Fecha'] < f_r]
                     fut_tab_rem = tab[tab['Fecha'] >= f_r]
                     old_pasivo_rem = past_tab_rem.iloc[-1]['S_Fin_Orig'] if not past_tab_rem.empty else vp
@@ -857,54 +846,33 @@ def modulo_notas():
                     tc_rem_spot = obtener_tc_cache(c['Moneda'], f_r)
                     if tc_rem_spot == 0: tc_rem_spot = 1.0
                     
-                    salto_rem = (new_pasivo_rem - old_pasivo_rem) * tc_rem_spot
-                    rem_a += salto_rem
-                    rem_p += salto_rem
+                    b_p = float(r.get('Baja_Pasivo') or 0.0)
+                    salto = (new_pasivo_rem - (old_pasivo_rem - b_p)) * tc_rem_spot
+                    rem_a += salto
+                    rem_p += salto
                     
-            # 5. Fijación Excéntrica del Saldo Final (Fotografía Real)
-            curr_fin = tab[tab['Fecha'] <= f_act]
-            if not curr_fin.empty:
-                s_fin_orig_real = curr_fin.iloc[-1]['S_Fin_Orig']
-                dep_acum_real = curr_fin['Dep_Orig'].sum()
-            else:
-                s_fin_orig_real = vp
-                dep_acum_real = 0
-                
-            s_fin_real = s_fin_orig_real * r_act_pasivo
-            s_fin_rou_real = (rou * r_act_rou) + rem_a - (dep_acum_real * r_act_rou)
-
-            # Validar Bajas Definitivas consolidadas y vencimientos naturales en YTD
-            es_baja = False
+                    if b_p > 0: bajas_p -= (b_p * tc_rem_spot)
+            
             f_fin_c = pd.to_datetime(c['Fin'])
-            f_baja_real = None
-
-            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
-                f_baja_real = pd.to_datetime(c['Fecha_Baja'])
-            elif f_act.year > f_fin_c.year or (f_act.year == f_fin_c.year and f_act.month >= f_fin_c.month):
-                f_baja_real = f_fin_c
-
-            if f_baja_real:
-                if f_baja_real.year < a:
-                    continue # Expiró el año anterior, excluir completamente
-                elif f_baja_real.year == a and f_baja_real.month <= m_idx:
+            es_baja = False
+            if f_fin_c.year < f_act.year or (f_fin_c.year == f_act.year and f_fin_c.month <= f_act.month):
+                if not (c.get('Fecha_Baja') and c['Estado'] == 'Baja' and pd.to_datetime(c['Fecha_Baja']) > f_act):
                     es_baja = True
-                    bajas_p = -s_fin_real
-                    s_fin_real = 0
+            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                f_b = pd.to_datetime(c['Fecha_Baja'])
+                if f_b.year < f_act.year or (f_b.year == f_act.year and f_b.month <= f_act.month):
+                    es_baja = True
                     
-            # 6. Recalcular la Diferencia de Cambio como "Plug" (Cuadratura Perfecta)
-            # Puente Teórico = S_Ini + Adiciones + Interes - Pagos + Rem_P + Dif_Cambio = S_Fin
-            # Despejando -> Dif_Cambio = S_Fin - S_Ini - Adiciones - Interes + Pagos - Rem_P - Bajas
-            reajuste = s_fin_real - s_ini - adic_pasivo - interes + pagos - rem_p - bajas_p
-            
-            # Requerimiento: El Activo ROU absorbe el 100% del reajuste del Pasivo (para UF/CLP)
-            reajuste_rou = reajuste if c['Moneda'] in ['UF', 'CLP'] else 0
-            
-            # Recalcular el Saldo Final del ROU forzando el arrastre perfecto
             if es_baja:
-                bajas_a = -(s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion)
-                s_fin_rou_real = 0
+                reajuste = 0
+                reajuste_rou = 0
+                bajas_p = s_fin_real - (s_ini + adic_pasivo + interes - pagos + rem_p)
+                bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a - amortizacion)
             else:
-                s_fin_rou_real = s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion + bajas_a
+                reajuste = s_fin_real - (s_ini + adic_pasivo + interes - pagos + rem_p + bajas_p)
+                reajuste_rou = reajuste if c['Moneda'] in ['UF', 'CLP'] else 0
+                bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion)
+                
             if rems:
                 last_rem = rems[-1]
                 n_can, n_tas, n_plaz, n_fin = last_rem['Canon'], last_rem['Tasa']*100, last_rem['Plazo'], last_rem['Fin']
@@ -1042,8 +1010,6 @@ def modulo_dashboard():
                     v12 = v_act - v_cor_sum 
                     
                     tc_ini = float(c['Valor_Moneda_Inicio']) if float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    rou_bruto_uf = rou
-                    
                     # Using the preloaded rems_grupos cache to prevent N+1 queries
                     rems = rems_grupos.get(c['Codigo_Interno'], [])
                     
@@ -1060,66 +1026,11 @@ def modulo_dashboard():
                          n_rou_orig = fut_r_last.iloc[0]['S_Ini_Orig'] if not fut_r_last.empty else 0.0
                          n_rou = n_rou_orig * ratio_pasivo # Requerimiento PwC
                          
-                    for r in rems:
-                        f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                        if f_r <= f_t:
-                            past_r = tab[tab['Fecha'] < f_r]
-                            fut_r = tab[tab['Fecha'] >= f_r]
-                            old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
-                            new_pasivo = fut_r.iloc[0]['S_Ini_Orig'] if not fut_r.empty else 0.0
-                            
-                            baja_p = r.get('Baja_Pasivo', 0.0)
-                            baja_r = r.get('Baja_ROU', 0.0)
-                            
-                            old_pasivo_adjusted = old_pasivo - baja_p
-                            jump_rou_uf = new_pasivo - old_pasivo_adjusted
-                            
-                            if baja_r > 0:
-                                rou_bruto_uf -= baja_r
-                            
-                            if abs(jump_rou_uf) > 0.01:
-                                rou_bruto_uf += jump_rou_uf
-
-                    if c['Moneda'] in ['UF', 'CLP']:
-                        f_dic_ant = pd.to_datetime(f"{a-1}-12-31")
-                        last_uf = obtener_tc_cache(c['Moneda'], f_dic_ant)
-                        f_ini_c = pd.to_datetime(c['Inicio'])
-                        fue_adicionado = (f_ini_c.year == a)
-                        
-                        past_ant = tab[tab['Fecha'] <= f_dic_ant]
-                        if fue_adicionado:
-                            s_ini_p = 0
-                            s_ini_rou = 0
-                        else:
-                            s_ini_p = (past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0) * last_uf
-                            s_ini_rou = (rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)) * last_uf
-                            
-                        curr_ytd = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'] <= f_t)]
-                        adic_p = vp * tc_ini if fue_adicionado else 0
-                        adic_rou = rou * tc_ini if fue_adicionado else 0
-                        
-                        interes = (curr_ytd['Int_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
-                        pagos = (curr_ytd['Pago_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
-                        amortizacion = (curr_ytd['Dep_Orig'] * ratio_pasivo).sum() if not curr_ytd.empty else 0
-                        
-                        rem_p = 0; rem_a = 0
-                        for r in rems:
-                            f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                            if f_r.year == a and f_r <= f_t:
-                                jump_p = r.get('Jump_Pasivo', 0)
-                                jump_a = r.get('Jump_ROU', 0)
-                                if jump_p > 0: rem_p += jump_p * ratio_pasivo
-                                if jump_a > 0: rem_a += jump_a * ratio_pasivo
-                                
-                        s_fin_p = v_act * ratio_pasivo
-                        reajuste_p = s_fin_p - s_ini_p - adic_p - interes + pagos - rem_p
-                        
-                        rou_neto_calc = s_ini_rou + adic_rou + rem_a + reajuste_p - amortizacion
-                        amort_clp = past['Dep_Orig'].sum() * ratio_pasivo
-                        rou_bruto = rou_neto_calc + amort_clp
-                    else:
-                        rou_bruto = rou_bruto_uf * ratio_pasivo
-                        amort_clp = past['Dep_Orig'].sum() * ratio_pasivo
+                    # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                    from core import simular_libro_mayor
+                    tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+                    if tc_ini_hist <= 0: tc_ini_hist = 1.0
+                    rou_bruto, amort_clp, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
                     dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * ratio_pasivo # PwC
