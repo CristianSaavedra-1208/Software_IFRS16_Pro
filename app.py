@@ -491,7 +491,7 @@ def modulo_asientos():
                 
                 if abs(reajuste) > 1.0:
                     if c['Moneda'] in ['UF', 'CLP']:
-                        t_tc = "5. Diferencia de Cambio (Remedición ROU)"
+                        t_tc = "5. Reajuste UF (Remedición ROU)"
                         if reajuste > 0: 
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), reajuste, 0)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), 0, reajuste)
@@ -897,8 +897,12 @@ def modulo_notas():
             # Puente Teórico = S_Ini + Adiciones + Interes - Pagos + Rem_P + Dif_Cambio = S_Fin
             # Despejando -> Dif_Cambio = S_Fin - S_Ini - Adiciones - Interes + Pagos - Rem_P - Bajas
             reajuste = s_fin_real - s_ini - adic_pasivo - interes + pagos - rem_p - bajas_p
-            reajuste_rou = s_fin_rou_real - s_ini_rou - adic_rou - rem_a + amortizacion - bajas_a
             
+            # Requerimiento: El Activo ROU absorbe el 100% del reajuste del Pasivo (para UF/CLP)
+            reajuste_rou = reajuste if c['Moneda'] in ['UF', 'CLP'] else 0
+            
+            # Recalcular el Saldo Final del ROU forzando el arrastre perfecto
+            s_fin_rou_real = s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion + bajas_a
             if rems:
                 last_rem = rems[-1]
                 n_can, n_tas, n_plaz, n_fin = last_rem['Canon'], last_rem['Tasa']*100, last_rem['Plazo'], last_rem['Fin']
@@ -907,8 +911,8 @@ def modulo_notas():
                 
             fin_orig = (pd.to_datetime(c['Inicio']) + pd.DateOffset(months=int(c['Plazo']))).strftime('%Y-%m-%d')
                     
-            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés devengado": interes, "Dif. Cambio": reajuste, "Pagos de capital": -(pagos - interes), "Pago de intereses": -interes, "Bajas": bajas_p, "S.Final": s_fin_real})
-            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Amortización": -amortizacion, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
+            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés devengado": interes, "Reajuste": reajuste, "Pagos de capital": -(pagos - interes), "Pago de intereses": -interes, "Bajas": bajas_p, "S.Final": s_fin_real})
+            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Reajuste": reajuste_rou, "Amortización": -amortizacion, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
         
         st.session_state.roll_pasivo = roll_pasivo
         st.session_state.roll_activo = roll_activo
@@ -926,7 +930,7 @@ def modulo_notas():
             st.subheader("Movimiento de saldos (Horizontal) - Pasivos")
             if roll_pasivo:
                 df_pas = pd.DataFrame(roll_pasivo)
-                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés devengado', 'Dif. Cambio', 'Pagos de capital', 'Pago de intereses', 'Bajas', 'S.Final']
+                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés devengado', 'Reajuste', 'Pagos de capital', 'Pago de intereses', 'Bajas', 'S.Final']
                 res_pasivo = df_pas.groupby('Clase_Activo')[cols_p_sum].sum()
                 res_pasivo.loc['TOTAL PASIVO'] = res_pasivo.sum()
                 
@@ -937,7 +941,7 @@ def modulo_notas():
                 
                 st.subheader("Movimiento de saldos (Horizontal) - Activos ROU")
                 df_act = pd.DataFrame(roll_activo)
-                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Amortización', 'Bajas', 'S.Final']
+                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Reajuste', 'Amortización', 'Bajas', 'S.Final']
                 res_activo = df_act.groupby('Clase_Activo')[cols_a_sum].sum()
                 res_activo.loc['TOTAL ACTIVO'] = res_activo.sum()
                 
