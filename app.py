@@ -2443,6 +2443,7 @@ def resolver_tasa_implicita(vr, ca, canon, plazo_meses, vrng, oc):
     return tasa_anual * 100
 
 def modulo_asistente_ibr():
+    import datetime
     st.header("🧮 Asistente de calculos (tasas de contratos-Activo y pasivo ROU)")
     st.write("**Herramienta aislada de consulta - No afecta la base de datos operativa**")
     
@@ -2663,7 +2664,6 @@ def modulo_asistente_ibr():
                 # Obtener TC actual para ponderacion
                 tc_deuda = 1.0
                 if moneda_deuda != "CLP":
-                    import datetime
                     tc_val = obtener_tc_cache(moneda_deuda, datetime.date.today())
                     if tc_val and tc_val > 0:
                         tc_deuda = tc_val
