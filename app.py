@@ -317,7 +317,7 @@ def modulo_asientos():
                 
                 t_amo = "2. Amortización"
                 tc_act_amo = tc_act if tc_act > 0 else 1.0
-                tc_amo_rou = tc_act_amo if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
+                tc_amo_rou = tc_act_amo if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('Amort', c_cls), it['Dep_Orig'] * tc_amo_rou, 0)
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('AmortAcum', c_cls), 0, it['Dep_Orig'] * tc_amo_rou)
                 
@@ -428,7 +428,7 @@ def modulo_asientos():
                     
                     if baja_p > 0 or baja_r > 0:
                         t_term = "7.a Terminación Parcial (Reducción de Alcance)"
-                        tc_rou_rem = tc_rem if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist
+                        tc_rou_rem = tc_rem if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
                         bp_clp = baja_p * tc_rem
                         br_clp = baja_r * tc_rou_rem
                         
@@ -488,7 +488,7 @@ def modulo_asientos():
                 reajuste = target_balance - saldo_libro
                 
                 if abs(reajuste) > 1.0:
-                    if c['Moneda'] in ['UF', 'CLP']:
+                    if c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026):
                         t_tc = "5. Reajuste UF (Remedición ROU)"
                         if reajuste > 0: 
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), reajuste, 0)
@@ -824,16 +824,29 @@ def modulo_notas():
             adic_pasivo = vp * tc_ini_hist if fue_adicionado else 0
             adic_rou = rou * tc_ini_hist if fue_adicionado else 0
             
+            f_baja_efectiva = None
+            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                f_baja = pd.to_datetime(c['Fecha_Baja'])
+                if f_baja <= f_act:
+                    f_baja_efectiva = f_baja
+            f_fin_c = pd.to_datetime(c['Fin'])
+            if f_act.year > f_fin_c.year or (f_act.year == f_fin_c.year and f_act.month >= f_fin_c.month):
+                if not f_baja_efectiva or f_fin_c < f_baja_efectiva:
+                    f_baja_efectiva = f_fin_c
+
             curr = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'] <= f_act)]
             interes = 0; pagos = 0; amortizacion = 0
             if not curr.empty:
                 for idx, row in curr.iterrows():
                     f_mes = pd.to_datetime(date(row['Fecha'].year, row['Fecha'].month, 1)) + relativedelta(day=31)
+                    if f_baja_efectiva:
+                        if f_mes.year > f_baja_efectiva.year or (f_mes.year == f_baja_efectiva.year and f_mes.month > f_baja_efectiva.month):
+                            continue
                     tc_mes = obtener_tc_cache(c['Moneda'], f_mes)
                     if tc_mes == 0: tc_mes = 1.0
                     interes += row['Int_Orig'] * tc_mes
                     pagos += row['Pago_Orig'] * tc_mes
-                    amortizacion += row['Dep_Orig'] * (tc_mes if c['Moneda'] in ['UF', 'CLP'] else tc_ini_hist)
+                    amortizacion += row['Dep_Orig'] * (tc_mes if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist)
                     
             rem_p = 0; rem_a = 0; bajas_p = 0
             for r in rems:
@@ -871,7 +884,7 @@ def modulo_notas():
                 bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a - amortizacion)
             else:
                 reajuste = s_fin_real - (s_ini + adic_pasivo + interes - pagos + rem_p + bajas_p)
-                reajuste_rou = reajuste if c['Moneda'] in ['UF', 'CLP'] else 0
+                reajuste_rou = reajuste if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else 0
                 bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion)
                 
             if rems:
@@ -1034,7 +1047,16 @@ def modulo_dashboard():
                     rou_bruto, amort_clp, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
-                    dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * ratio_pasivo # PwC
+                    dep_ejercicio_clp = 0.0
+                    for idx, row_dep in past_ejercicio.iterrows():
+                        f_mes_dep = pd.to_datetime(date(row_dep['Fecha'].year, row_dep['Fecha'].month, 1)) + relativedelta(day=31)
+                        if f_baja_efectiva:
+                            if f_mes_dep.year > f_baja_efectiva.year or (f_mes_dep.year == f_baja_efectiva.year and f_mes_dep.month > f_baja_efectiva.month):
+                                continue
+                        tc_mes_dep = obtener_tc_cache(c['Moneda'], f_mes_dep)
+                        if tc_mes_dep == 0: tc_mes_dep = 1.0
+                        tc_amo_rou = tc_mes_dep if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
+                        dep_ejercicio_clp += row_dep['Dep_Orig'] * tc_amo_rou
                     
                     f_fin_date = pd.to_datetime(c['Fin']).date()
                     f_t_date = f_t.date()

@@ -239,7 +239,9 @@ def modulo_asientos():
             'Interes': (obtener_parametros('CUENTA_GASTO_INT_NUM')[0] if obtener_parametros('CUENTA_GASTO_INT_NUM') else '4201', obtener_parametros('CUENTA_GASTO_INT_NOM')[0] if obtener_parametros('CUENTA_GASTO_INT_NOM') else 'Gasto Interés'),
             'Banco': (obtener_parametros('CUENTA_BANCO_PAGO_NUM')[0] if obtener_parametros('CUENTA_BANCO_PAGO_NUM') else '1102', obtener_parametros('CUENTA_BANCO_PAGO_NOM')[0] if obtener_parametros('CUENTA_BANCO_PAGO_NOM') else 'Banco Efectivo'),
             'Perdida': (obtener_parametros('CUENTA_PERDIDA_TC_NUM')[0] if obtener_parametros('CUENTA_PERDIDA_TC_NUM') else '4301', obtener_parametros('CUENTA_PERDIDA_TC_NOM')[0] if obtener_parametros('CUENTA_PERDIDA_TC_NOM') else 'Pérdida TC'),
-            'Ganancia': (obtener_parametros('CUENTA_GANANCIA_TC_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NUM') else '4302', obtener_parametros('CUENTA_GANANCIA_TC_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NOM') else 'Ganancia TC')
+            'Ganancia': (obtener_parametros('CUENTA_GANANCIA_TC_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NUM') else '4302', obtener_parametros('CUENTA_GANANCIA_TC_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_TC_NOM') else 'Ganancia TC'),
+            'PerdidaBaja': (obtener_parametros('CUENTA_PERDIDA_BAJA_NUM')[0] if obtener_parametros('CUENTA_PERDIDA_BAJA_NUM') else '4401', obtener_parametros('CUENTA_PERDIDA_BAJA_NOM')[0] if obtener_parametros('CUENTA_PERDIDA_BAJA_NOM') else 'Otros Gastos (Pérdida por Baja)'),
+            'GananciaBaja': (obtener_parametros('CUENTA_GANANCIA_BAJA_NUM')[0] if obtener_parametros('CUENTA_GANANCIA_BAJA_NUM') else '4402', obtener_parametros('CUENTA_GANANCIA_BAJA_NOM')[0] if obtener_parametros('CUENTA_GANANCIA_BAJA_NOM') else 'Otros Ingresos (Utilidad por Baja)')
         }
         
         import unicodedata
@@ -252,7 +254,8 @@ def modulo_asientos():
             ('ROU', 'CUENTA_ROU'), ('Pasivo', 'CUENTA_PASIVO'), ('Ajuste', 'CUENTA_BCO_AJUSTE'),
             ('Amort', 'CUENTA_GASTO_AMORT'), ('AmortAcum', 'CUENTA_AMORT_ACUM'), 
             ('Interes', 'CUENTA_GASTO_INT'), ('Banco', 'CUENTA_BANCO_PAGO'),
-            ('Perdida', 'CUENTA_PERDIDA_TC'), ('Ganancia', 'CUENTA_GANANCIA_TC')
+            ('Perdida', 'CUENTA_PERDIDA_TC'), ('Ganancia', 'CUENTA_GANANCIA_TC'),
+            ('PerdidaBaja', 'CUENTA_PERDIDA_BAJA'), ('GananciaBaja', 'CUENTA_GANANCIA_BAJA')
         ]:
             mapas_clases[cta_key] = {}
             for cls in obtener_parametros('CLASE_ACTIVO'):
@@ -308,12 +311,15 @@ def modulo_asientos():
                     tc_ant = obtener_tc_cache(c['Moneda'], f_ant)
                     
                 tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
+                tc_ini_hist = tc_ini
                 ratio_act = tc_act
                 ratio_ant = tc_ant
                 
                 t_amo = "2. Amortización"
-                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('Amort', c_cls), it['Dep_Orig'] * tc_ini, 0)
-                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('AmortAcum', c_cls), 0, it['Dep_Orig'] * tc_ini)
+                tc_act_amo = tc_act if tc_act > 0 else 1.0
+                tc_amo_rou = tc_act_amo if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
+                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('Amort', c_cls), it['Dep_Orig'] * tc_amo_rou, 0)
+                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_amo, *get_cta('AmortAcum', c_cls), 0, it['Dep_Orig'] * tc_amo_rou)
                 
                 t_pag = "3. Pago de Arriendo ROU"
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_pag, *get_cta('Pasivo', c_cls), it['Pago_Orig'] * ratio_act, 0)
@@ -324,7 +330,7 @@ def modulo_asientos():
                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_int, *get_cta('Pasivo', c_cls), 0, it['Int_Orig'] * ratio_act)
                 
                 # Diferencia de Cambio calculada al final del proceso mensual para asegurar cuadratura perfecta.
-    
+            
             tc_ini_hist = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
             
             # Asiento de Baja Definitiva o Remedición Manual
@@ -333,15 +339,16 @@ def modulo_asientos():
                 f_baja = pd.to_datetime(c['Fecha_Baja'])
                 if f_baja.month == m_idx and f_baja.year == a:
                     paso_baja_manual = True
-                    # Calcular saldos al momento del cese/remedición
-                    pasado = tab[tab['Fecha'] <= f_act]
-                    if not pasado.empty:
-                        tc_baja = obtener_tc_cache(c['Moneda'], f_baja)
-                        s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
-                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
+                    # Calcular saldos exactos históricos just antes de la baja
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    if True:
+                        s_fin_pasivo = p_hist
+                        amort_acum = aa_hist
+                        s_fin_rou = rb_hist - aa_hist
+                        r_neto = rb_hist
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(r_neto) > 0.01:
                             if c['Estado'] == 'Remedido':
                                 t_baja = "7. Cierre por Remedición"
                                 # Reversar Pasivo
@@ -349,7 +356,6 @@ def modulo_asientos():
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
                                 
                                 # Reversar ROU y Amort
-                                r_neto = (rou * tc_ini_hist)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 
@@ -363,14 +369,13 @@ def modulo_asientos():
                                 t_baja = "6. Baja Definitiva de Contrato"
                                 if s_fin_pasivo > 0:
                                     add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                                r_neto = (rou * tc_ini_hist)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
                                 dif_baja = s_fin_pasivo - s_fin_rou
                                 if dif_baja > 0:
-                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Ganancia', c_cls), 0, dif_baja)
+                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('GananciaBaja', c_cls), 0, dif_baja)
                                 elif dif_baja < 0:
-                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Perdida', c_cls), abs(dif_baja), 0)
+                                    add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('PerdidaBaja', c_cls), abs(dif_baja), 0)
     
             # Verificar si hubo una Terminación Parcial (Reducción) en el mismo mes que anule la Baja Natural
             paso_terminacion_parcial = False
@@ -381,31 +386,27 @@ def modulo_asientos():
                     paso_terminacion_parcial = True
                     break
 
-            # Asiento Automático por Término Natural del Contrato
-            f_fin_c = pd.to_datetime(c['Fin'])
             if not paso_baja_manual and not paso_terminacion_parcial and c['Estado'] == 'Activo':
                 if f_fin_c.month == m_idx and f_fin_c.year == a:
-                    pasado = tab[tab['Fecha'] <= f_act]
-                    if not pasado.empty:
-                        tc_baja = obtener_tc_cache(c['Moneda'], f_fin_c)
-                        s_fin_pasivo = pasado.iloc[-1]['S_Fin_Orig'] * tc_baja
-                        amort_acum = pasado['Dep_Orig'].sum() * tc_ini_hist
-                        s_fin_rou = (rou * tc_ini_hist) - amort_acum
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    if True:
+                        s_fin_pasivo = p_hist
+                        amort_acum = aa_hist
+                        s_fin_rou = rb_hist - aa_hist
+                        r_neto = rb_hist
                         
-                        if s_fin_pasivo > 0.01 or abs(rou * tc_ini_hist) > 0.01:
+                        if s_fin_pasivo > 0.01 or abs(r_neto) > 0.01:
                             t_baja = "6. Baja por Término Natural del Contrato"
                             if s_fin_pasivo > 0:
                                 add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Pasivo', c_cls), s_fin_pasivo, 0)
-                            
-                            r_neto = (rou * tc_ini_hist)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('ROU', c_cls), 0, r_neto)
                             add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('AmortAcum', c_cls), amort_acum, 0)
-                            
                             dif_baja = s_fin_pasivo - s_fin_rou
                             if dif_baja > 0:
-                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Ganancia', c_cls), 0, dif_baja)
+                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('GananciaBaja', c_cls), 0, dif_baja)
                             elif dif_baja < 0:
-                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('Perdida', c_cls), abs(dif_baja), 0)
+                                add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_baja, *get_cta('PerdidaBaja', c_cls), abs(dif_baja), 0)
 
             # Asiento de Ajuste por Remedición
             rems = rems_grupos.get(c['Codigo_Interno'], [])
@@ -427,8 +428,9 @@ def modulo_asientos():
                     
                     if baja_p > 0 or baja_r > 0:
                         t_term = "7.a Terminación Parcial (Reducción de Alcance)"
+                        tc_rou_rem = tc_rem if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
                         bp_clp = baja_p * tc_rem
-                        br_clp = baja_r * tc_ini
+                        br_clp = baja_r * tc_rou_rem
                         
                         # Calcular el diferencial matemático en CLP absoluto para cuadratura perfecta
                         pl_efecto_clp_real = bp_clp - br_clp
@@ -437,9 +439,9 @@ def modulo_asientos():
                         add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('ROU', c_cls), 0, br_clp)
                         
                         if pl_efecto_clp_real > 0:
-                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('Ganancia', c_cls), 0, pl_efecto_clp_real)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('GananciaBaja', c_cls), 0, pl_efecto_clp_real)
                         elif pl_efecto_clp_real < 0:
-                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('Perdida', c_cls), abs(pl_efecto_clp_real), 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_term, *get_cta('PerdidaBaja', c_cls), abs(pl_efecto_clp_real), 0)
                             
                         old_pasivo -= baja_p
                     
@@ -486,13 +488,22 @@ def modulo_asientos():
                 reajuste = target_balance - saldo_libro
                 
                 if abs(reajuste) > 1.0:
-                    t_tc = "5. Diferencia de Cambio"
-                    if reajuste > 0: 
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Perdida', c_cls), reajuste, 0)
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), 0, reajuste)
-                    else:
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), abs(reajuste), 0)
-                        add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Ganancia', c_cls), 0, abs(reajuste))
+                    if c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026):
+                        t_tc = "5. Reajuste UF (Remedición ROU)"
+                        if reajuste > 0: 
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), reajuste, 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), 0, reajuste)
+                        else:
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), abs(reajuste), 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('ROU', c_cls), 0, abs(reajuste))
+                    else: # USD, EUR (NIC 21)
+                        t_tc = "5. Diferencia de Cambio"
+                        if reajuste > 0:
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Perdida', c_cls), reajuste, 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), 0, reajuste)
+                        else:
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Pasivo', c_cls), abs(reajuste), 0)
+                            add_asiento(detalles, c['Empresa'], c['Codigo_Interno'], t_tc, *get_cta('Ganancia', c_cls), 0, abs(reajuste))
 
         # --- PLUG DE REDONDEO (CUENTA AJUSTES 1101) ---
         total_debe = round(sum(d.get('Debe', 0) for d in detalles))
@@ -792,50 +803,55 @@ def modulo_notas():
             r_ant_pasivo = tc_ant 
             
             tc_ini = float(c['Valor_Moneda_Inicio']) if c.get('Valor_Moneda_Inicio') and float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-            r_act_rou = tc_ini
-            r_ant_rou = tc_ini
+            r_act_rou = tc_act # Requerimiento PwC: ROU usa UF actual
+            r_ant_rou = tc_ant # Requerimiento PwC
             
+            from core import simular_libro_mayor
             f_ini_c = pd.to_datetime(c['Inicio'])
             fue_adicionado = (f_ini_c.year == a)
-            
-            # Saldo Inicial (Cierre del año anterior YTD)
-            past_ant = tab[tab['Fecha'] <= f_ant]
-            if fue_adicionado:
-                s_ini = 0
-                s_ini_rou = 0
-                s_ini_orig = 0
-                s_ini_rou_orig = 0
-            else:
-                s_ini_orig = past_ant.iloc[-1]['S_Fin_Orig'] if not past_ant.empty else 0
-                s_ini = s_ini_orig * r_ant_pasivo
-                
-                s_ini_rou_orig = rou - (past_ant['Dep_Orig'].sum() if not past_ant.empty else 0)
-                s_ini_rou = s_ini_rou_orig * r_ant_rou
-            
-            # Reconocimiento Inicial (Adiciones YTD)
-            if fue_adicionado:
-                adic_pasivo = vp * tc_ini
-                adic_rou = rou * tc_ini
-            else:
-                adic_pasivo = 0
-                adic_rou = 0
-                
-            # Movimientos del año (YTD) hasta el mes seleccionado
-            curr = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'].dt.month <= m_idx)]
-            interes = curr['Int_Orig'].sum() * r_act_pasivo if not curr.empty else 0
-            pagos = curr['Pago_Orig'].sum() * r_act_pasivo if not curr.empty else 0
-            amortizacion = curr['Dep_Orig'].sum() * r_act_rou if not curr.empty else 0
-            
-            # 4. Modificadores (Bajas, Remediciones) 
+            tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+            if tc_ini_hist <= 0: tc_ini_hist = 1.0
             rems = rems_grupos.get(c['Codigo_Interno'], [])
-            bajas_p, bajas_a = 0, 0
-            rem_p, rem_a = 0, 0
             
-            # Las remediciones sumarán el valor del ajuste ROU inyectado en ese periodo
+            rb_ini, a_acum_ini, p_ini = simular_libro_mayor(c, tab, f_ant, rems, tc_ini_hist, vp, rou)
+            rb_fin, a_acum_fin, p_fin = simular_libro_mayor(c, tab, f_act, rems, tc_ini_hist, vp, rou)
+            
+            s_ini = p_ini
+            s_ini_rou = rb_ini - a_acum_ini
+            s_fin_real = p_fin
+            s_fin_rou_real = rb_fin - a_acum_fin
+            
+            adic_pasivo = vp * tc_ini_hist if fue_adicionado else 0
+            adic_rou = rou * tc_ini_hist if fue_adicionado else 0
+            
+            f_baja_efectiva = None
+            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                f_baja = pd.to_datetime(c['Fecha_Baja'])
+                if f_baja <= f_act:
+                    f_baja_efectiva = f_baja
+            f_fin_c = pd.to_datetime(c['Fin'])
+            if f_act.year > f_fin_c.year or (f_act.year == f_fin_c.year and f_act.month >= f_fin_c.month):
+                if not f_baja_efectiva or f_fin_c < f_baja_efectiva:
+                    f_baja_efectiva = f_fin_c
+
+            curr = tab[(tab['Fecha'].dt.year == a) & (tab['Fecha'] <= f_act)]
+            interes = 0; pagos = 0; amortizacion = 0
+            if not curr.empty:
+                for idx, row in curr.iterrows():
+                    f_mes = pd.to_datetime(date(row['Fecha'].year, row['Fecha'].month, 1)) + relativedelta(day=31)
+                    if f_baja_efectiva:
+                        if f_mes.year > f_baja_efectiva.year or (f_mes.year == f_baja_efectiva.year and f_mes.month > f_baja_efectiva.month):
+                            continue
+                    tc_mes = obtener_tc_cache(c['Moneda'], f_mes)
+                    if tc_mes == 0: tc_mes = 1.0
+                    interes += row['Int_Orig'] * tc_mes
+                    pagos += row['Pago_Orig'] * tc_mes
+                    amortizacion += row['Dep_Orig'] * (tc_mes if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist)
+                    
+            rem_p = 0; rem_a = 0; bajas_p = 0
             for r in rems:
                 f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                # Filtramos que haya ocurrido en el YTD hasta el mes evaluado
-                if f_r.year == a and f_r.month <= m_idx:
+                if f_r.year == a and f_r <= f_act:
                     past_tab_rem = tab[tab['Fecha'] < f_r]
                     fut_tab_rem = tab[tab['Fecha'] >= f_r]
                     old_pasivo_rem = past_tab_rem.iloc[-1]['S_Fin_Orig'] if not past_tab_rem.empty else vp
@@ -844,48 +860,33 @@ def modulo_notas():
                     tc_rem_spot = obtener_tc_cache(c['Moneda'], f_r)
                     if tc_rem_spot == 0: tc_rem_spot = 1.0
                     
-                    salto_rem = (new_pasivo_rem - old_pasivo_rem) * tc_rem_spot
-                    rem_a += salto_rem
-                    rem_p += salto_rem
+                    b_p = float(r.get('Baja_Pasivo') or 0.0)
+                    salto = (new_pasivo_rem - (old_pasivo_rem - b_p)) * tc_rem_spot
+                    rem_a += salto
+                    rem_p += salto
                     
-            # 5. Fijación Excéntrica del Saldo Final (Fotografía Real)
-            curr_fin = tab[tab['Fecha'] <= f_act]
-            if not curr_fin.empty:
-                s_fin_orig_real = curr_fin.iloc[-1]['S_Fin_Orig']
-                dep_acum_real = curr_fin['Dep_Orig'].sum()
-            else:
-                s_fin_orig_real = vp
-                dep_acum_real = 0
-                
-            s_fin_real = s_fin_orig_real * r_act_pasivo
-            s_fin_rou_real = (rou * r_act_rou) + rem_a - (dep_acum_real * r_act_rou)
-
-            # Validar Bajas Definitivas consolidadas y vencimientos naturales en YTD
-            es_baja = False
-            f_fin_c = pd.to_datetime(c['Fin'])
-            f_baja_real = None
-
-            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
-                f_baja_real = pd.to_datetime(c['Fecha_Baja'])
-            elif f_act.year > f_fin_c.year or (f_act.year == f_fin_c.year and f_act.month >= f_fin_c.month):
-                f_baja_real = f_fin_c
-
-            if f_baja_real:
-                if f_baja_real.year < a:
-                    continue # Expiró el año anterior, excluir completamente
-                elif f_baja_real.year == a and f_baja_real.month <= m_idx:
-                    es_baja = True
-                    bajas_p = -s_fin_real
-                    bajas_a = -s_fin_rou_real
-                    s_fin_real = 0
-                    s_fin_rou_real = 0
-                    
-            # 6. Recalcular la Diferencia de Cambio como "Plug" (Cuadratura Perfecta)
-            # Puente Teórico = S_Ini + Adiciones + Interes - Pagos + Rem_P + Dif_Cambio = S_Fin
-            # Despejando -> Dif_Cambio = S_Fin - S_Ini - Adiciones - Interes + Pagos - Rem_P - Bajas
-            reajuste = s_fin_real - s_ini - adic_pasivo - interes + pagos - rem_p - bajas_p
-            reajuste_rou = s_fin_rou_real - s_ini_rou - adic_rou - rem_a + amortizacion - bajas_a
+                    if b_p > 0: bajas_p -= (b_p * tc_rem_spot)
             
+            f_fin_c = pd.to_datetime(c['Fin'])
+            es_baja = False
+            if f_fin_c.year < f_act.year or (f_fin_c.year == f_act.year and f_fin_c.month <= f_act.month):
+                if not (c.get('Fecha_Baja') and c['Estado'] == 'Baja' and pd.to_datetime(c['Fecha_Baja']) > f_act):
+                    es_baja = True
+            if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                f_b = pd.to_datetime(c['Fecha_Baja'])
+                if f_b.year < f_act.year or (f_b.year == f_act.year and f_b.month <= f_act.month):
+                    es_baja = True
+                    
+            if es_baja:
+                reajuste = 0
+                reajuste_rou = 0
+                bajas_p = s_fin_real - (s_ini + adic_pasivo + interes - pagos + rem_p)
+                bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a - amortizacion)
+            else:
+                reajuste = s_fin_real - (s_ini + adic_pasivo + interes - pagos + rem_p + bajas_p)
+                reajuste_rou = reajuste if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else 0
+                bajas_a = s_fin_rou_real - (s_ini_rou + adic_rou + rem_a + reajuste_rou - amortizacion)
+                
             if rems:
                 last_rem = rems[-1]
                 n_can, n_tas, n_plaz, n_fin = last_rem['Canon'], last_rem['Tasa']*100, last_rem['Plazo'], last_rem['Fin']
@@ -894,8 +895,8 @@ def modulo_notas():
                 
             fin_orig = (pd.to_datetime(c['Inicio']) + pd.DateOffset(months=int(c['Plazo']))).strftime('%Y-%m-%d')
                     
-            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés devengado": interes, "Dif. Cambio": reajuste, "Pagos de capital": -(pagos - interes), "Pago de intereses": -interes, "Bajas": bajas_p, "S.Final": s_fin_real})
-            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Amortización": -amortizacion, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
+            roll_pasivo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini, "Adiciones": adic_pasivo, "Remediciones": rem_p, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Interés devengado": interes, "Reajuste": reajuste, "Pagos de capital": -(pagos - interes), "Pago de intereses": -interes, "Bajas": bajas_p, "S.Final": s_fin_real})
+            roll_activo.append({"ID_Contrato": c['Codigo_Interno'], "Empresa": c['Empresa'], "Clase_Activo": c['Clase_Activo'], "Contrato": c['Nombre'], "S.Inicial": s_ini_rou, "Adiciones": adic_rou, "Remediciones": rem_a, "Nuevo_Canon": n_can, "Nueva_Tasa_Anual_%": n_tas, "Nuevo_Plazo": n_plaz, "Nuevo_Fin": n_fin, "Fin_Original": fin_orig, "Reajuste": reajuste_rou, "Amortización": -amortizacion, "Bajas": bajas_a, "S.Final": s_fin_rou_real})
         
         st.session_state.roll_pasivo = roll_pasivo
         st.session_state.roll_activo = roll_activo
@@ -913,22 +914,24 @@ def modulo_notas():
             st.subheader("Movimiento de saldos (Horizontal) - Pasivos")
             if roll_pasivo:
                 df_pas = pd.DataFrame(roll_pasivo)
-                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés devengado', 'Dif. Cambio', 'Pagos de capital', 'Pago de intereses', 'Bajas', 'S.Final']
+                cols_p_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Interés devengado', 'Reajuste', 'Pagos de capital', 'Pago de intereses', 'Bajas', 'S.Final']
                 res_pasivo = df_pas.groupby('Clase_Activo')[cols_p_sum].sum()
                 res_pasivo.loc['TOTAL PASIVO'] = res_pasivo.sum()
                 
                 # Apply smaller font size style if necessary
                 styled_pas = res_pasivo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
                 st.dataframe(styled_pas, use_container_width=True)
+                st.download_button("Exportar Resumen Pasivos (Excel)", to_excel_formatted(res_pasivo.reset_index()), f"Resumen_Pasivos_{m_saved}_{a_saved}.xlsx")
                 
                 st.subheader("Movimiento de saldos (Horizontal) - Activos ROU")
                 df_act = pd.DataFrame(roll_activo)
-                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Amortización', 'Bajas', 'S.Final']
+                cols_a_sum = ['S.Inicial', 'Adiciones', 'Remediciones', 'Reajuste', 'Amortización', 'Bajas', 'S.Final']
                 res_activo = df_act.groupby('Clase_Activo')[cols_a_sum].sum()
                 res_activo.loc['TOTAL ACTIVO'] = res_activo.sum()
                 
                 styled_act = res_activo.style.format(precision=0, thousands=".").set_properties(**{'font-size': '14px', 'white-space': 'nowrap'})
                 st.dataframe(styled_act, use_container_width=True)
+                st.download_button("Exportar Resumen Activos ROU (Excel)", to_excel_formatted(res_activo.reset_index()), f"Resumen_Activos_{m_saved}_{a_saved}.xlsx")
                 
             else:
                 st.info("No hay datos")
@@ -937,11 +940,11 @@ def modulo_notas():
             if roll_pasivo:
                 st.subheader("Pasivos por Arrendamiento (Detalle)")
                 st.dataframe(df_pas.style.format(precision=0, thousands="."))
-                st.download_button("Exportar Pasivos", to_excel(df_pas), f"RPasivos_{m_saved}_{a_saved}.xlsx")
+                st.download_button("Exportar Pasivos", to_excel_formatted(df_pas), f"RPasivos_{m_saved}_{a_saved}.xlsx")
                 
                 st.subheader("Activos por Derecho de Uso ROU (Detalle)")
                 st.dataframe(df_act.style.format(precision=0, thousands="."))
-                st.download_button("Exportar Activos", to_excel(df_act), f"RActivos_{m_saved}_{a_saved}.xlsx")
+                st.download_button("Exportar Activos", to_excel_formatted(df_act), f"RActivos_{m_saved}_{a_saved}.xlsx")
 
 def modulo_dashboard():
     st.header("🧮 Panel de Saldos")
@@ -1021,8 +1024,6 @@ def modulo_dashboard():
                     v12 = v_act - v_cor_sum 
                     
                     tc_ini = float(c['Valor_Moneda_Inicio']) if float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    rou_bruto = rou * tc_ini
-                    
                     # Using the preloaded rems_grupos cache to prevent N+1 queries
                     rems = rems_grupos.get(c['Codigo_Interno'], [])
                     
@@ -1037,39 +1038,36 @@ def modulo_dashboard():
                          f_r_last = pd.to_datetime(last_rem['Fecha_Remedicion'])
                          fut_r_last = tab[tab['Fecha'] >= f_r_last]
                          n_rou_orig = fut_r_last.iloc[0]['S_Ini_Orig'] if not fut_r_last.empty else 0.0
-                         tc_rem_last = obtener_tc_cache(c['Moneda'], f_r_last)
-                         if tc_rem_last == 0: tc_rem_last = 1.0
-                         n_rou = n_rou_orig * tc_rem_last
+                         n_rou = n_rou_orig * ratio_pasivo # Requerimiento PwC
                          
-                    for r in rems:
-                        f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                        if f_r <= f_t:
-                            tc_rem = obtener_tc_cache(c['Moneda'], f_r)
-                            if tc_rem == 0: tc_rem = 1.0
-                            
-                            past_r = tab[tab['Fecha'] < f_r]
-                            fut_r = tab[tab['Fecha'] >= f_r]
-                            old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
-                            new_pasivo = fut_r.iloc[0]['S_Ini_Orig'] if not fut_r.empty else 0.0
-                            
-                            baja_p = r.get('Baja_Pasivo', 0.0)
-                            baja_r = r.get('Baja_ROU', 0.0)
-                            
-                            old_pasivo_adjusted = old_pasivo - baja_p
-                            jump_rou_uf = new_pasivo - old_pasivo_adjusted
-                            
-                            if baja_r > 0:
-                                rou_bruto -= (baja_r * tc_ini)
-                            
-                            if abs(jump_rou_uf) > 0.01:
-                                rou_bruto += (jump_rou_uf * tc_rem)
-
-                    amort_acum = past['Dep_Orig'].sum()
-                    amort_clp = amort_acum * tc_ini
+                    # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                    from core import simular_libro_mayor
+                    tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+                    if tc_ini_hist <= 0: tc_ini_hist = 1.0
+                    rou_bruto, amort_clp, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
-                    dep_ejercicio_clp = past_ejercicio['Dep_Orig'].sum() * tc_ini
+                    dep_ejercicio_clp = 0.0
+                    for idx, row_dep in past_ejercicio.iterrows():
+                        f_mes_dep = pd.to_datetime(date(row_dep['Fecha'].year, row_dep['Fecha'].month, 1)) + relativedelta(day=31)
+                        if f_baja_efectiva:
+                            if f_mes_dep.year > f_baja_efectiva.year or (f_mes_dep.year == f_baja_efectiva.year and f_mes_dep.month > f_baja_efectiva.month):
+                                continue
+                        tc_mes_dep = obtener_tc_cache(c['Moneda'], f_mes_dep)
+                        if tc_mes_dep == 0: tc_mes_dep = 1.0
+                        tc_amo_rou = tc_mes_dep if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
+                        dep_ejercicio_clp += row_dep['Dep_Orig'] * tc_amo_rou
                     
+                    f_fin_date = pd.to_datetime(c['Fin']).date()
+                    f_t_date = f_t.date()
+                    es_baja_ejercicio = False
+                    if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                        f_b = pd.to_datetime(c['Fecha_Baja']).date()
+                        if f_b.year == a and f_b <= f_t_date:
+                            es_baja_ejercicio = True
+                    elif f_fin_date.year == a and f_fin_date <= f_t_date:
+                        es_baja_ejercicio = True
+                        
                     if es_baja_ejercicio:
                         v_act = 0
                         v_cor_sum = 0
@@ -1077,12 +1075,9 @@ def modulo_dashboard():
                         rou_bruto = 0
                         amort_clp = 0
                         rou = 0
-
+                        
                     item_dict = {}
                     
-                    # 1. Estado de Vigencia al Corte
-                    f_fin_date = pd.to_datetime(c['Fin']).date()
-                    f_t_date = f_t.date()
                     if c.get('Estado') == 'Baja' and c.get('Fecha_Baja'):
                         estado_vig = '🚨 Dado de Baja'
                         estado_real = 'Dado de Baja'
@@ -1981,7 +1976,7 @@ def modulo_vencimientos():
             
             st.write(f"**Detalle al {f_t_saved.strftime('%d-%m-%Y')} (En M$)**")
             st.dataframe(piv.style.format(precision=0, thousands="."))
-            st.download_button("Exportar Formato (Excel)", to_excel(piv), f"Nota_Vencimientos_{m_saved}_{a_saved}.xlsx")
+            st.download_button("Exportar Formato (Excel)", to_excel_formatted(piv.reset_index()), f"Nota_Vencimientos_{m_saved}_{a_saved}.xlsx")
     
         with t2:
             st.subheader(f"Pasivos {tipo_lbl} (Detallado)")
@@ -1997,8 +1992,7 @@ def modulo_vencimientos():
             piv2 = piv2 / 1000
             st.write(f"**Detalle Contractual al {f_t_saved.strftime('%d-%m-%Y')} (En M$)**")
             st.dataframe(piv2.style.format(precision=0, thousands="."))
-            st.download_button("Exportar Detalle (Excel)", to_excel(piv2), f"Nota_Venc_Detalle_{m_saved}_{a_saved}.xlsx")
-
+            st.download_button("Exportar Detalle (Excel)", to_excel_formatted(piv2.reset_index()), f"Nota_Venc_Detalle_{m_saved}_{a_saved}.xlsx")
 
 def modulo_auditoria():
     st.header("🔍 Auditoría y Transparencia")
@@ -2012,7 +2006,7 @@ def modulo_auditoria():
         1. **Conversión de Tasa de Interés (Tasa Efectiva Mensual)** *(Ref. NIIF 16 Párraf. 26)*
         Se utiliza la fórmula de interés compuesto para hallar la tasa mensual equivalente a partir del input anual:
         `Tasa_Mensual = (1 + Tasa_Anual) ^ (1/12) - 1`
-        *(Nota: Si se desea una validación lineal con calculadoras Excel estándar, se requiere proveer la tasa Nominal y no la Efectiva)*
+        *(Nota de Auditoría: El sistema asume que la Tasa Anual ingresada es una Tasa Efectiva (TEA). Para que una validación con la fórmula =VA() de Excel cuadre exactamente, el auditor no debe dividir la tasa anual entre 12 (lo cual sería tratarla como Nominal), sino que debe ingresar el argumento de tasa en Excel como `(1 + Tasa_Anual)^(1/12) - 1`)*
         
         2. **Cálculo de Valor Presente (VP) - Pagos Vencidos** *(Ref. NIIF 16 Párraf. 26 - Medición inicial del pasivo)*
         `VP = Canon * [1 - (1 + Tasa_Mensual)^(-Plazo)] / Tasa_Mensual`
@@ -2033,6 +2027,10 @@ def modulo_auditoria():
         7. **Cálculo de Pasivos No Descontados (Análisis de Vencimientos)** *(Ref. NIIF 16 Párraf. 58 y NIIF 7 Párraf. 39(a))*
         Se utiliza para la nota obligatoria de riesgo de liquidez NIIF 7. Corresponde al sumatorio estricto de todos los desembolsos nominales brutos (`Canon * Tipo_Cambio_Cierre`) cuyas fechas de pago sean posteriores a la fecha de reporte, sin aplicar la tasa de descuento.
         `Pasivo_No_Descontado_Bucket_A = SUMA(Cánones_Futuros_Rango_A) * TC_Cierre`
+        
+        8. **Tratamiento de UF e Indexación (Criterio PwC)** *(Ref. NIIF 16)*
+        En contratos indexados a inflación (UF), tanto el Pasivo como el Activo ROU (y su Amortización Acumulada) se actualizan dinámicamente al valor de la UF de cierre. La variación mensual generada por la UF se capitaliza como una **remedición del activo**, asegurando una paridad absoluta entre el Pasivo y el ROU.
+        `Pasivo = Saldo_Origen * Valor_Cierre` | `ROU = Saldo_Origen * Valor_Cierre`
         ''')
     
     with t2:
@@ -2117,13 +2115,18 @@ def _render_integracion_erp():
 def modulo_configuracion():
     st.header("⚙️ Configuración del Sistema")
     
-    if st.session_state.get('rol') == 'Ingeniero IT (Técnico)':
+    rol_actual = st.session_state.get('rol')
+    if rol_actual == 'Ingeniero IT (Técnico)':
         t_it = st.tabs(["Integraciones ERP"])
         with t_it[0]:
             _render_integracion_erp()
         return
         
-    opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "Mantenimiento BD"]
+    if rol_actual == 'Auditor Ext. / Gerencia (Lector)':
+        opciones = ["Log de Usuario"]
+    else:
+        opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "Mantenimiento BD"]
+        
     sel_tab = st.radio("Sección de Configuración", opciones, horizontal=True, key="config_tabs_radio")
     
     if sel_tab == "Usuarios":
@@ -2317,7 +2320,9 @@ def modulo_configuracion():
             ('CUENTA_GASTO_INT', 'Gasto Interés (Costo Fin.)'), 
             ('CUENTA_BANCO_PAGO', 'Banco Efectivo (Pago)'), 
             ('CUENTA_PERDIDA_TC', 'Pérdida por Tipo de Cambio'), 
-            ('CUENTA_GANANCIA_TC', 'Ganancia por Tipo de Cambio')
+            ('CUENTA_GANANCIA_TC', 'Ganancia por Tipo de Cambio'),
+            ('CUENTA_PERDIDA_BAJA', 'Pérdida por Término de Contrato'),
+            ('CUENTA_GANANCIA_BAJA', 'Ganancia por Término de Contrato')
         ]
         with st.form("fc_cuentas"):
             n_vals = []
@@ -2357,31 +2362,50 @@ def modulo_configuracion():
         st.subheader("Log de Usuario (Logs del Sistema)")
         st.info("Registre y trace todas las acciones operativas realizadas por los usuarios (creación/eliminación de contratos, modificaciones, etc).")
         
-        c_tog, c_btn = st.columns([3, 1])
-        estado_actual = is_audit_enabled()
+        rol_actual = st.session_state.get('rol')
         
-        with c_tog:
-            nuevo_estado = st.toggle("Activar Registro Automático de Acciones (Auditoría)", value=estado_actual)
+        if rol_actual != 'Auditor Ext. / Gerencia (Lector)':
+            c_tog, c_btn = st.columns([3, 1])
+            estado_actual = is_audit_enabled()
             
-        if nuevo_estado != estado_actual:
-            if nuevo_estado:
-                agregar_parametro('AUDIT_LOG_ENABLED', '1')
-                st.session_state.success_msg = "Log de Usuario ACTIVADO. Todas las alteraciones en Contratos y Parámetros quedarán registradas."
-            else:
-                eliminar_parametro('AUDIT_LOG_ENABLED', '1')
-                st.session_state.success_msg = "Bitácora DESACTIVADA."
-            st.rerun()
-            
-        st.markdown("---")
-        if c_btn.button("🔄 Refrescar Visor de Logs", type="primary", use_container_width=True):
-            st.rerun()
-            
+            with c_tog:
+                nuevo_estado = st.toggle("Activar Registro Automático de Acciones (Auditoría)", value=estado_actual)
+                
+            if nuevo_estado != estado_actual:
+                if nuevo_estado:
+                    agregar_parametro('AUDIT_LOG_ENABLED', '1')
+                    st.session_state.success_msg = "Log de Usuario ACTIVADO. Todas las alteraciones en Contratos y Parámetros quedarán registradas."
+                else:
+                    eliminar_parametro('AUDIT_LOG_ENABLED', '1')
+                    st.session_state.success_msg = "Bitácora DESACTIVADA."
+                st.rerun()
+                
+            st.markdown("---")
+            if c_btn.button("🔄 Refrescar Visor de Logs", type="primary", use_container_width=True):
+                st.rerun()
+        else:
+            st.markdown("---")
+            if st.button("🔄 Refrescar Visor de Logs", type="primary"):
+                st.rerun()
+                
         logs_df = obtener_logs()
         if logs_df.empty:
             st.warning("No hay registros en la Bitácora actualmente.")
         else:
             logs_df.rename(columns={'id':'ID_Log', 'fecha_hora':'Fecha/Hora', 'usuario':'Usuario', 'accion': 'Acción Ejecutada', 'entidad_id': 'Contrato / Entidad', 'detalles':'Detalle Extra'}, inplace=True)
             st.dataframe(logs_df, use_container_width=True)
+
+        import os
+        dir_logs = os.path.join("data", "logs_historicos")
+        if os.path.exists(dir_logs):
+            archivos = [f for f in os.listdir(dir_logs) if f.endswith('.xlsx')]
+            if archivos:
+                st.markdown("---")
+                st.subheader("Archivos Históricos Generados Automáticamente")
+                for arch in sorted(archivos, reverse=True):
+                    file_path = os.path.join(dir_logs, arch)
+                    with open(file_path, "rb") as f:
+                        st.download_button(f"📥 Descargar {arch}", data=f, file_name=arch, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"dl_{arch}")
 
     elif sel_tab == "Mantenimiento BD":
         st.subheader("Mantenimiento y Reseteo de Datos")
@@ -2441,6 +2465,7 @@ def resolver_tasa_implicita(vr, ca, canon, plazo_meses, vrng, oc):
     return tasa_anual * 100
 
 def modulo_asistente_ibr():
+    import datetime
     st.header("🧮 Asistente de calculos (tasas de contratos-Activo y pasivo ROU)")
     st.write("**Herramienta aislada de consulta - No afecta la base de datos operativa**")
     
@@ -2661,7 +2686,6 @@ def modulo_asistente_ibr():
                 # Obtener TC actual para ponderacion
                 tc_deuda = 1.0
                 if moneda_deuda != "CLP":
-                    import datetime
                     tc_val = obtener_tc_cache(moneda_deuda, datetime.date.today())
                     if tc_val and tc_val > 0:
                         tc_deuda = tc_val
@@ -3200,7 +3224,7 @@ def main():
         elif rol_actual == 'Analista Financiero (Editor)':
             opciones_menu = [m for m in menus_todas if m not in ['Configuración', 'Auditoría']]
         elif rol_actual == 'Auditor Ext. / Gerencia (Lector)':
-            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Mi Perfil"]
+            opciones_menu = ["Monedas", "Contratos", "Resumen de Saldos", "Asientos", "Nota: Movimiento de saldos", "Nota: Vencimientos NIIF 16", "Auditoría", "Asistente de calculos (tasas de contratos-Activo y pasivo ROU)", "Configuración", "Mi Perfil"]
         elif rol_actual == 'Ingeniero IT (Técnico)':
             opciones_menu = ["Configuración", "Mi Perfil"]
         else:

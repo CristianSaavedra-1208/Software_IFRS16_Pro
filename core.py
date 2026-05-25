@@ -307,7 +307,8 @@ def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=Fal
         tc_act = obtener_tc_cache(c['Moneda'], f_mes)
         if tc_act == 0: tc_act = 1.0
         
-        tc_amo_rou = tc_act if es_uf_clp else tc_ini_hist
+        es_moneda_rou_activa = es_uf_clp or (c['Moneda'] == 'UTM' and f_mes.year >= 2026)
+        tc_amo_rou = tc_act if es_moneda_rou_activa else tc_ini_hist
         
         # 1. Amortizacion
         amort_acum_clp += row['Dep_Orig'] * tc_amo_rou
@@ -324,7 +325,8 @@ def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=Fal
                 f_r = pd.to_datetime(r['Fecha_Remedicion'])
                 tc_rem = obtener_tc_cache(c['Moneda'], f_r)
                 if tc_rem == 0: tc_rem = 1.0
-                tc_rou_rem = tc_rem if es_uf_clp else tc_ini_hist
+                es_moneda_rou_rem = es_uf_clp or (c['Moneda'] == 'UTM' and f_r.year >= 2026)
+                tc_rou_rem = tc_rem if es_moneda_rou_rem else tc_ini_hist
                 
                 baja_p = float(r.get('Baja_Pasivo') or 0.0)
                 baja_r = float(r.get('Baja_ROU') or 0.0)
@@ -355,7 +357,8 @@ def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=Fal
         reajuste = target_balance - pasivo_clp
         if abs(reajuste) > 1.0:
             pasivo_clp += reajuste
-            if es_uf_clp:
+            es_moneda_rou_reajuste = es_uf_clp or (c['Moneda'] == 'UTM' and row['Fecha'].year >= 2026)
+            if es_moneda_rou_reajuste:
                 rou_bruto_clp += reajuste
 
     if not ignore_baja:
