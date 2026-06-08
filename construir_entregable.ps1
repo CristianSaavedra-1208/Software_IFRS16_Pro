@@ -24,18 +24,17 @@ Write-Host "Exportando imagen Docker a archivo .tar (encriptando codigo fuente).
 docker save -o "$OutputDir\instalador_ifrs16.tar" ifrs16_pro_image:latest
 
 # 4. Copiar archivos necesarios para el cliente
-Write-Host "Copiando docker-compose y manual..." -ForegroundColor Yellow
+Write-Host "Copiando docker-compose..." -ForegroundColor Yellow
 Copy-Item "docker-compose-cliente.yml" -Destination "$OutputDir\docker-compose.yml"
-Copy-Item "Manual_IT_Instalacion_y_Mantenimiento.md" -Destination "$OutputDir\"
 
 # 5. Copiar base de datos inicial
 Copy-Item "ifrs16_platinum.db" -Destination "$OutputDir\"
 
 Write-Host "=====================================================" -ForegroundColor Green
 Write-Host "¡PAQUETE CREADO EXITOSAMENTE EN LA CARPETA 'Paquete_Cliente'!" -ForegroundColor Green
-Write-Host "Estos son los UNICOS archivos que debes enviar:"
+Write-Host "Estos son los archivos en la carpeta que debes enviar:"
 Write-Host "1. instalador_ifrs16.tar (Imagen del sistema)"
-Write-Host "2. docker-compose.yml (Configuracion)"
+Write-Host "2. docker-compose.yml (Configuración)"
 Write-Host "3. ifrs16_platinum.db (Base de datos)"
-Write-Host "4. Manual_IT_Instalacion_y_Mantenimiento.md (Instrucciones)"
+Write-Host "Nota: El Manual_IT_Instalacion_y_Mantenimiento.md queda fuera para que lo envíes por separado."
 Write-Host "=====================================================" -ForegroundColor Green
