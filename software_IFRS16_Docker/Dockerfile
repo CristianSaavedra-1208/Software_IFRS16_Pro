@@ -22,11 +22,17 @@ COPY . .
 # Compilamos todos los archivos .py a archivos binarios ilegibles (.pyc)
 RUN python -m compileall -b . 
 
+# Renombramos app.pyc a app_main.pyc para importarlo en el wrapper
+RUN mv app.pyc app_main.pyc
+
 # Eliminamos los archivos de texto legibles (.py) para que nadie pueda ver ni editar el código fuente
 RUN find . -name "*.py" -type f -delete
+
+# Creamos el wrapper app.py que importa app_main
+RUN echo "import app_main" > app.py
 
 # Exponemos el puerto de Streamlit
 EXPOSE 8501
 
-# Comando de arranque usando el archivo compilado principal
-CMD ["streamlit", "run", "app.pyc", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.fileWatcherType=none"]
+# Comando de arranque usando el wrapper app.py
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.fileWatcherType=none"]

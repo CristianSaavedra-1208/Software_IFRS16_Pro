@@ -1,0 +1,13 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Local SQLite databases (not part of the repository logic)
+database.db
+
+# Excel audit reports (local output files)
+*.xlsx
+
+# Temporary test and audit scripts
+tmp_*
+verify_*

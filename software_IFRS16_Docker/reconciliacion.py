@@ -64,8 +64,14 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
             past = tab[tab['Fecha'] <= f_t]
             if not past.empty and not es_baja:
                 tc = obtener_tc_cache(c['Moneda'], f_t)
-                v_act = past.iloc[-1]['S_Fin_Orig']
+                # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                from core import simular_libro_mayor
+                tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
+                if tc_ini_hist <= 0: tc_ini_hist = 1.0
+                rems = rems_grupos.get(c['Codigo_Interno'], [])
+                r_bruto, a_acum, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
                 
+                v_act = past.iloc[-1]['S_Fin_Orig']
                 futuros = tab[tab['Fecha'] > f_t].copy()
                 v_cor_sum = 0
                 if not futuros.empty:
@@ -77,28 +83,23 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                     v_cor_sum = futuros.loc[es_corriente, 'Capital'].sum()
                     
                 v12 = v_act - v_cor_sum
-                tc_ini = float(c['Valor_Moneda_Inicio']) if float(c.get('Valor_Moneda_Inicio', 1)) > 0 else 1.0
-                r_bruto = rou * tc_ini
                 
-                rems = rems_grupos.get(c['Codigo_Interno'], [])
-                for r in rems:
-                    f_r = pd.to_datetime(r['Fecha_Remedicion'])
-                    if f_r <= f_t:
-                        tc_rem = obtener_tc_cache(c['Moneda'], f_r)
-                        if tc_rem == 0: tc_rem = 1.0
+                # Bajas definitivas
+                f_fin_date = pd.to_datetime(c['Fin'])
+                es_baja = False
+                if f_fin_date.year < f_t.year or (f_fin_date.year == f_t.year and f_fin_date.month <= f_t.month):
+                    if not (c.get('Fecha_Baja') and c['Estado'] == 'Baja' and pd.to_datetime(c['Fecha_Baja']) > f_t):
+                        es_baja = True
                         
-                        past_r = tab[tab['Fecha'] < f_r]
-                        fut_r = tab[tab['Fecha'] >= f_r]
-                        old_pasivo = past_r.iloc[-1]['S_Fin_Orig'] if not past_r.empty else vp
-                        new_pasivo = fut_r.iloc[0]['S_Ini_Orig'] if not fut_r.empty else 0.0
-                        baja_p = r.get('Baja_Pasivo', 0.0)
-                        baja_r = r.get('Baja_ROU', 0.0)
+                if c.get('Fecha_Baja') and c['Estado'] == 'Baja':
+                    f_b = pd.to_datetime(c['Fecha_Baja'])
+                    if f_b.year < f_t.year or (f_b.year == f_t.year and f_b.month <= f_t.month):
+                        es_baja = True
                         
-                        jump_rou_uf = new_pasivo - (old_pasivo - baja_p)
-                        if baja_r > 0: r_bruto -= (baja_r * tc_ini)
-                        if abs(jump_rou_uf) > 0.01: r_bruto += (jump_rou_uf * tc_rem)
-                        
-                a_acum = past['Dep_Orig'].sum() * tc_ini
+                if es_baja:
+                    v_act = 0
+                    v_cor_sum = 0
+                    v12 = 0
                 
                 rou_bruto_tot += r_bruto
                 amort_acum_tot += a_acum

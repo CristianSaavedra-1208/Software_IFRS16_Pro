@@ -699,52 +699,58 @@ except Exception as e:
                                         '_codigo_cta': cuenta
                                     }))
                                 
-                                try:
-                                    common = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/common')
-                                    uid = common.authenticate(db, user, pwd, {})
-                                    if not uid:
-                                        st.error("❌ Falló la autenticación con Odoo. Revise las credenciales en 'Configuración'.")
-                                    else:
-                                        models = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/object')
-                                        
-                                        # Buscar el Diario por defecto (Misceláneos)
-                                        j_ids = models.execute_kw(db, uid, pwd, 'account.journal', 'search', [[['type', '=', 'general']]], {'limit': 1})
-                                        journal_id = j_ids[0] if j_ids else False
-                                        
-                                        # Resolver IDs de cuentas según el código para evitar errores relacionales
-                                        codigos = list(set([l[2]['_codigo_cta'] for l in line_ids]))
-                                        cuentas_odoo = models.execute_kw(db, uid, pwd, 'account.account', 'search_read', 
-                                            [[['code', 'in', codigos]]], {'fields': ['id', 'code']})
-                                        mapa_cuentas = {c['code']: c['id'] for c in cuentas_odoo}
-                                        
-                                        falta_cuenta = False
-                                        for l in line_ids:
-                                            cod = l[2].pop('_codigo_cta')
-                                            acc_id = mapa_cuentas.get(cod)
-                                            if acc_id:
-                                                l[2]['account_id'] = acc_id
+                                if not line_ids:
+                                    st.warning("⚠️ No hay líneas de asiento contable para inyectar este mes.")
+                                else:
+                                    try:
+                                        common = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/common')
+                                        uid = common.authenticate(db, user, pwd, {})
+                                        if not uid:
+                                            st.error("❌ Falló la autenticación con Odoo. Revise las credenciales en 'Configuración'.")
+                                        else:
+                                            models = xmlrpc.client.ServerProxy(f'{url.rstrip("/")}/xmlrpc/2/object')
+                                            
+                                            # Buscar el Diario por defecto (Misceláneos)
+                                            j_ids = models.execute_kw(db, uid, pwd, 'account.journal', 'search', [[['type', '=', 'general']]], {'limit': 1})
+                                            journal_id = j_ids[0] if j_ids else False
+                                            
+                                            if not journal_id:
+                                                st.error("❌ No se encontró un diario del tipo 'general' en Odoo. Por favor, configure un diario general en Odoo antes de inyectar.")
                                             else:
-                                                st.warning(f"⚠️ La cuenta '{cod}' no existe en el plan de cuentas de Odoo.")
-                                                falta_cuenta = True
-                                        
-                                        if not falta_cuenta:
-                                            # Payload maestro del asiento
-                                            move_vals = {
-                                                'ref': f"IFRS 16 - {m_saved} {a_saved}",
-                                                'date': pd.to_datetime(f"{a_saved}-{MESES_LISTA.index(m_saved)+1}-01") + relativedelta(day=31),
-                                                'journal_id': journal_id,
-                                                'line_ids': line_ids
-                                            }
-                                            
-                                            # Formatear fecha para el JSON de Odoo (string)
-                                            move_vals['date'] = move_vals['date'].strftime('%Y-%m-%d')
-                                            
-                                            # Crear Asiento Borrador
-                                            move_id = models.execute_kw(db, uid, pwd, 'account.move', 'create', [move_vals])
-                                            st.success(f"✅ ¡Éxito! Asiento preliminar (Borrador) creado en Odoo. (ID Asiento: {move_id})")
-                                            
-                                except Exception as e:
-                                    st.error(f"❌ Ocurrió un error al enviar información a Odoo: {str(e)}")
+                                                # Resolver IDs de cuentas según el código para evitar errores relacionales
+                                                codigos = list(set([l[2]['_codigo_cta'] for l in line_ids]))
+                                                cuentas_odoo = models.execute_kw(db, uid, pwd, 'account.account', 'search_read', 
+                                                    [[['code', 'in', codigos]]], {'fields': ['id', 'code']})
+                                                mapa_cuentas = {c['code']: c['id'] for c in cuentas_odoo}
+                                                
+                                                falta_cuenta = False
+                                                for l in line_ids:
+                                                    cod = l[2].pop('_codigo_cta')
+                                                    acc_id = mapa_cuentas.get(cod)
+                                                    if acc_id:
+                                                        l[2]['account_id'] = acc_id
+                                                    else:
+                                                        st.warning(f"⚠️ La cuenta '{cod}' no existe en el plan de cuentas de Odoo.")
+                                                        falta_cuenta = True
+                                                
+                                                if not falta_cuenta:
+                                                    # Payload maestro del asiento
+                                                    move_vals = {
+                                                        'ref': f"IFRS 16 - {m_saved} {a_saved}",
+                                                        'date': pd.to_datetime(f"{a_saved}-{MESES_LISTA.index(m_saved)+1}-01") + relativedelta(day=31),
+                                                        'journal_id': journal_id,
+                                                        'line_ids': line_ids
+                                                    }
+                                                    
+                                                    # Formatear fecha para el JSON de Odoo (string)
+                                                    move_vals['date'] = move_vals['date'].strftime('%Y-%m-%d')
+                                                    
+                                                    # Crear Asiento Borrador
+                                                    move_id = models.execute_kw(db, uid, pwd, 'account.move', 'create', [move_vals])
+                                                    st.success(f"✅ ¡Éxito! Asiento preliminar (Borrador) creado en Odoo. (ID Asiento: {move_id})")
+                                                    
+                                    except Exception as e:
+                                        st.error(f"❌ Ocurrió un error al enviar información a Odoo: {str(e)}")
                                 
                             elif erp_act == "SAP ERP (OData/BAPI)":
                                 # import requests

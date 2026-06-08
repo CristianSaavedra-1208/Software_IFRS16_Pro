@@ -1,13 +1,12 @@
 import pandas as pd
-from app import *
 from db import *
-from core import motor_financiero_v20
+from core import motor_financiero_v21
 
 df_c = pd.DataFrame(cargar_contratos())
 errores = 0
 for _, c in df_c.iterrows():
     try:
-        motor_financiero_v20(c)
+        motor_financiero_v21(c)
     except Exception as e:
         print(f"Error fatal en {c['Codigo_Interno']}: {e}")
         errores += 1
