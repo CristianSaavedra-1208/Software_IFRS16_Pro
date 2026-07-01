@@ -11,3 +11,7 @@ database.db
 # Temporary test and audit scripts
 tmp_*
 verify_*
+
+# Client distribution packages
+Paquete_Cliente/
+
