@@ -11,15 +11,12 @@ from functools import lru_cache
 
 @lru_cache(maxsize=4096)
 def _obtener_tc_cache_interno(moneda, f_s):
-    """Lookup de TC con cache LRU. Usa query SQL directa en lugar de filtrar
-    el DataFrame completo en memoria. Logica identica: valor mas reciente
-    de 'moneda' en o antes de 'f_s'. El @lru_cache evita repetir la query SQL
-    para las mismas combinaciones (moneda, fecha) dentro de la sesion.
-    """
     if moneda == "CLP": return 1.0
+    df = obtener_df_monedas_cache()
+    if df.empty: return 0.0
     try:
-        from db import obtener_tc_spot
-        return obtener_tc_spot(moneda, f_s)
+        res = df[(df['moneda'] == moneda) & (df['fecha'] <= f_s)]
+        return float(res.iloc[0]['valor']) if not res.empty else 0.0
     except: return 0.0
 
 def obtener_tc_cache(moneda, fecha):

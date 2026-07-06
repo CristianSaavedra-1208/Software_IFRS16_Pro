@@ -10,7 +10,7 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
     Genera un DataFrame de Reconciliación (Roll-Forward) iterando mes a mes
     para calcular los deltas orgánicos de cada mes de forma independiente.
     """
-    from app import obtener_motor_financiero, obtener_tc_cache, obtener_simulacion_libro_mayor
+    from app import obtener_motor_financiero, obtener_tc_cache
     
     # Diciembre del año anterior
     f_dic = pd.to_datetime(date(a - 1, 12, 31))
@@ -64,11 +64,12 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
             past = tab[tab['Fecha'] <= f_t]
             if not past.empty and not es_baja:
                 tc = obtener_tc_cache(c['Moneda'], f_t)
-                # Integracion con el motor central (usa cache de session_state via obtener_simulacion_libro_mayor)
+                # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                from core import simular_libro_mayor
                 tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
                 if tc_ini_hist <= 0: tc_ini_hist = 1.0
                 rems = rems_grupos.get(c['Codigo_Interno'], [])
-                r_bruto, a_acum, pasivo_total_clp = obtener_simulacion_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
+                r_bruto, a_acum, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
                 
                 v_act = past.iloc[-1]['S_Fin_Orig']
                 futuros = tab[tab['Fecha'] > f_t].copy()

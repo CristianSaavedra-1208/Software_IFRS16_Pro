@@ -207,34 +207,6 @@ def obtener_motor_financiero(c, rems=None):
     return tab, vp, rou
 
 
-def obtener_simulacion_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=False):
-    """Wrapper con cache en session_state para simular_libro_mayor.
-    Mismos inputs -> mismo output garantizado (funcion determinista).
-    El cache se invalida junto con motor_cache en todos los eventos de escritura.
-    """
-    from core import simular_libro_mayor
-    if 'slm_cache' not in st.session_state:
-        st.session_state.slm_cache = {}
-
-    cid = c['Codigo_Interno']
-    hash_key = (
-        f"{cid}"
-        f"_{str(pd.to_datetime(f_t).date())}"
-        f"_{int(ignore_baja)}"
-        f"_{len(rems)}"
-        f"_{tc_ini_hist:.6f}"
-        f"_{vp:.4f}"
-        f"_{rou:.4f}"
-    )
-
-    if hash_key in st.session_state.slm_cache:
-        return st.session_state.slm_cache[hash_key]
-
-    result = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja)
-    st.session_state.slm_cache[hash_key] = result
-    return result
-
-
 # --- MÓDULOS ---
 
 def modulo_asientos():
@@ -368,7 +340,8 @@ def modulo_asientos():
                 if f_baja.month == m_idx and f_baja.year == a:
                     paso_baja_manual = True
                     # Calcular saldos exactos históricos just antes de la baja
-                    rb_hist, aa_hist, p_hist = obtener_simulacion_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
                     if True:
                         s_fin_pasivo = p_hist
                         amort_acum = aa_hist
@@ -415,7 +388,8 @@ def modulo_asientos():
 
             if not paso_baja_manual and not paso_terminacion_parcial and c['Estado'] == 'Activo':
                 if f_fin_c.month == m_idx and f_fin_c.year == a:
-                    rb_hist, aa_hist, p_hist = obtener_simulacion_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
+                    from core import simular_libro_mayor
+                    rb_hist, aa_hist, p_hist = simular_libro_mayor(c, tab, f_act, rems_grupos.get(c['Codigo_Interno'], []), tc_ini_hist, vp, rou, ignore_baja=True)
                     if True:
                         s_fin_pasivo = p_hist
                         amort_acum = aa_hist
@@ -838,14 +812,15 @@ def modulo_notas():
             r_act_rou = tc_act # Requerimiento PwC: ROU usa UF actual
             r_ant_rou = tc_ant # Requerimiento PwC
             
+            from core import simular_libro_mayor
             f_ini_c = pd.to_datetime(c['Inicio'])
             fue_adicionado = (f_ini_c.year == a)
             tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
             if tc_ini_hist <= 0: tc_ini_hist = 1.0
             rems = rems_grupos.get(c['Codigo_Interno'], [])
             
-            rb_ini, a_acum_ini, p_ini = obtener_simulacion_libro_mayor(c, tab, f_ant, rems, tc_ini_hist, vp, rou)
-            rb_fin, a_acum_fin, p_fin = obtener_simulacion_libro_mayor(c, tab, f_act, rems, tc_ini_hist, vp, rou)
+            rb_ini, a_acum_ini, p_ini = simular_libro_mayor(c, tab, f_ant, rems, tc_ini_hist, vp, rou)
+            rb_fin, a_acum_fin, p_fin = simular_libro_mayor(c, tab, f_act, rems, tc_ini_hist, vp, rou)
             
             s_ini = p_ini
             s_ini_rou = rb_ini - a_acum_ini
@@ -1071,10 +1046,11 @@ def modulo_dashboard():
                          n_rou_orig = fut_r_last.iloc[0]['S_Ini_Orig'] if not fut_r_last.empty else 0.0
                          n_rou = n_rou_orig * ratio_pasivo # Requerimiento PwC
                          
-                    # Integracion con el motor central de Asientos Historicos (simular_libro_mayor)
+                    # Integración con el motor central de Asientos Históricos (simular_libro_mayor)
+                    from core import simular_libro_mayor
                     tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
                     if tc_ini_hist <= 0: tc_ini_hist = 1.0
-                    rou_bruto, amort_clp, pasivo_total_clp = obtener_simulacion_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
+                    rou_bruto, amort_clp, pasivo_total_clp = simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
 
                     past_ejercicio = past[past['Fecha'].dt.year == a]
                     dep_ejercicio_clp = 0.0
@@ -1260,7 +1236,6 @@ def modulo_monedas():
             insertar_moneda(f.strftime('%Y-%m-%d'), m, v)
             st.cache_data.clear()
             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
             st.session_state.success_msg = f"Moneda {m} guardada exitosamente para la fecha {f.strftime('%Y-%m-%d')}."
             st.rerun()
         
@@ -1277,7 +1252,6 @@ def modulo_monedas():
                     cargar_masivo_monedas(df_in_m)
                     st.cache_data.clear()
                     if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                     st.session_state.success_msg = f"Tipos de cambio cargados exitosamente. Se han cargado {len(df_in_m)} líneas."
                     st.rerun()
                 except Exception as e:
@@ -1390,7 +1364,6 @@ def modulo_contratos():
                 nuevo_c.update(extra_vals)
                 insertar_contrato(nuevo_c, st.session_state.get('user', 'Sistema/Usuario'))
                 if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                 st.session_state.success_msg = "Contrato creado manualmente"
                 st.rerun()
 
@@ -1509,7 +1482,6 @@ def modulo_contratos():
                             insertar_contrato(nuevo_masivo, st.session_state.get('user', 'Sistema/Usuario'))
                             contratos_existentes.append(nuevo_masivo) # Corrección de trick para número de correlativo
                         if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                        if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                         t_fin_carga = time.time()
                         st.success(f"✅ **Contratos validados y cargados exitosamente**. Se han ingresado {len(df_in)} nuevas líneas al sistema.")
                         st.info(f"⏱️ Tiempo total de procesamiento y carga: {t_fin_carga - t_ini_carga:.2f} segundos.")
@@ -1642,7 +1614,6 @@ def modulo_contratos():
                     st.success(f"¡Contrato {c_sel['Codigo_Interno']} modificado exitosamente! (Se agregó el tramo de modificación a su flujo histórico)")
                     # Limpiar estado del motor financiero para forzar re-cálculo
                     if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                     st.cache_data.clear()
                     st.rerun()
         else:
@@ -1657,7 +1628,6 @@ def modulo_contratos():
             if st.button("Procesar Baja Definitiva"):
                 dar_baja_contrato(c_baja['Codigo_Interno'], f_baja.strftime('%Y-%m-%d'), st.session_state.get('user', 'Sistema/Usuario'))
                 if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                 st.session_state.success_msg = f"Contrato dado de baja exitosamente en la fecha {f_baja}"
                 st.rerun()
 
@@ -1733,7 +1703,6 @@ def modulo_contratos():
                                 exitos += 1
                                 
                             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                             st.session_state.success_msg = f"{exitos} contratos procesados masivamente para baja."
                             st.rerun()
         else:
@@ -1846,7 +1815,6 @@ def modulo_contratos():
                                 exitos += 1
                                 
                             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
                             st.cache_data.clear()
                             
                             if errores:
@@ -2456,7 +2424,6 @@ def modulo_configuracion():
             limpiar_monedas()
             st.cache_data.clear()
             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
             st.success("✅ Historial de monedas eliminado por completo. Puede cargar un nuevo archivo en el módulo de Monedas.")
             
         st.markdown("---")
@@ -2466,7 +2433,6 @@ def modulo_configuracion():
             limpiar_contratos()
             st.cache_data.clear()
             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
             st.success("✅ Base de datos de contratos vaciada. El sistema está listo para una carga masiva desde el módulo de Contratos.")
 
 def resolver_tasa_implicita(vr, ca, canon, plazo_meses, vrng, oc):
@@ -2523,7 +2489,7 @@ def modulo_asistente_ibr():
         ''', unsafe_allow_html=True)
         
     st.markdown("#### ¿Qué desea calcular?")
-    tab_imp, tab_ibr, tab_men, tab_vp, tab_venc = st.tabs(["a) Determinar Tasa Anual Implícita", "b) Determinar Tasa Anual IBR", "c) Tasa de Interés Mensual", "d) Calculadora Valor Presente", "e) Simulación Vencimientos NIIF 16"])
+    tab_imp, tab_ibr, tab_men, tab_vp = st.tabs(["a) Determinar Tasa Anual Implícita", "b) Determinar Tasa Anual IBR", "c) Tasa de Interés Mensual", "d) Calculadora Valor Presente"])
             
     with tab_imp:
         st.subheader("Calculadora Tasa Implícita en el arrendamiento")
@@ -3070,10 +3036,6 @@ def modulo_asistente_ibr():
                 # 3. Invocar al motor financiero real
                 tab_vp_calc, vp_val, rou_val = obtener_motor_financiero(c_fake)
                 
-                # Guardar en session_state para auto-completar la pestaña de vencimientos
-                st.session_state.sim_contrato = c_fake
-                st.session_state.sim_vp_tasa = float(vp_tasa)
-                
                 st.success(f"### Valor Presente Calculado (VP): {vp_val:,.2f} {vp_moneda}")
                 if vp_moneda != "CLP":
                     st.info(f"💡 Tipo de cambio {vp_moneda} capturado al {vp_f_inicio.strftime('%d-%m-%Y')}: {tc_inicio:,.2f} CLP | VP Equivalente inicial: {(vp_val*tc_inicio):,.0f} CLP")
@@ -3153,400 +3115,6 @@ def modulo_asistente_ibr():
                     )
                 else:
                     st.error("Los parámetros ingresados no generaron un cuadro válido.")
-                    
-    with tab_venc:
-        st.subheader("Simulador de Nota de Vencimientos NIIF 16")
-        st.info("💡 **Análisis de Vencimientos:** Esta pestaña le permite proyectar los vencimientos futuros Descontados y No Descontados de un contrato individual a una fecha de corte determinada.")
-        
-        # Botón para importar datos del simulador
-        if st.session_state.get('sim_contrato') is not None:
-            if st.button("📥 Importar Parámetros de la Calculadora de Valor Presente"):
-                st.session_state.venc_sim_canon = float(st.session_state.sim_contrato['Canon'])
-                st.session_state.venc_sim_tasa = float(st.session_state.sim_vp_tasa)
-                st.session_state.venc_sim_inicio = pd.to_datetime(st.session_state.sim_contrato['Inicio']).date()
-                st.session_state.venc_sim_fin = pd.to_datetime(st.session_state.sim_contrato['Fin']).date()
-                st.session_state.venc_sim_moneda = st.session_state.sim_contrato['Moneda']
-                st.session_state.venc_sim_frec = st.session_state.sim_contrato['Frecuencia_Pago']
-                st.session_state.venc_sim_tipo = st.session_state.sim_contrato['Tipo_Pago']
-                st.success("¡Parámetros importados con éxito! Revisa los campos abajo.")
-        
-        c_v1, c_v2, c_v3 = st.columns(3)
-        v_canon = c_v1.number_input("Monto de Cuota (Canon)", min_value=0.0, step=10.0, value=st.session_state.get('venc_sim_canon', 100.0), key="v_canon_sim")
-        v_f_inicio = c_v2.date_input("Fecha de Inicio", value=st.session_state.get('venc_sim_inicio', date.today()), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31), key="v_f_inicio_sim")
-        v_f_fin = c_v3.date_input("Fecha de Término", value=st.session_state.get('venc_sim_fin', date.today() + relativedelta(years=1)), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31), key="v_f_fin_sim")
-        
-        c_v4, c_v5, c_v6 = st.columns(3)
-        v_tasa = c_v4.number_input("Tasa Efectiva Anual (%)", min_value=0.0, step=0.1, value=st.session_state.get('venc_sim_tasa', 6.0), format="%.4f", key="v_tasa_sim")
-        
-        frecuencias_raw = obtener_parametros('FRECUENCIA_PAGO')
-        if not frecuencias_raw: frecuencias_raw = ["Mensual-1", "Trimestral-3", "Semestral-6", "Anual-12"]
-        nombres_frec = [f.split('-')[0] for f in frecuencias_raw]
-        
-        default_frec_idx = 0
-        if st.session_state.get('venc_sim_frec') in nombres_frec:
-            default_frec_idx = nombres_frec.index(st.session_state.venc_sim_frec)
-        v_frec = c_v5.selectbox("Frecuencia de Pago", nombres_frec, index=default_frec_idx, key="v_frec_sim")
-        
-        default_tipo_idx = 0
-        if st.session_state.get('venc_sim_tipo') == "Anticipado":
-            default_tipo_idx = 1
-        v_tipo = c_v6.selectbox("Tipo de Pago", ["Vencido", "Anticipado"], index=default_tipo_idx, key="v_tipo_sim")
-        
-        c_v7, c_v8 = st.columns(2)
-        monedas_activas = obtener_parametros('MONEDA')
-        if not monedas_activas: monedas_activas = ["UF", "CLP", "USD", "EUR"]
-        
-        default_mon_idx = 0
-        if st.session_state.get('venc_sim_moneda') in monedas_activas:
-            default_mon_idx = monedas_activas.index(st.session_state.venc_sim_moneda)
-        v_moneda = c_v7.selectbox("Moneda del Contrato", monedas_activas, index=default_mon_idx, key="v_moneda_sim")
-        
-        # Fecha de Corte para los vencimientos futuros
-        v_f_corte = c_v8.date_input("Fecha de Corte de Reporte", value=date.today(), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31), key="v_f_corte_sim")
-        
-        st.markdown("---")
-        
-        if st.button("▶ Simular Distribución de Vencimientos", type="primary", key="v_btn_sim"):
-            diff = relativedelta(v_f_fin, v_f_inicio)
-            v_plazo_calc = diff.years * 12 + diff.months
-            if diff.days >= 15: v_plazo_calc += 1
-            
-            if v_plazo_calc <= 0:
-                st.error("❌ La Fecha de Término debe ser posterior a la Fecha de Inicio.")
-            elif v_f_corte < v_f_inicio:
-                st.error("❌ La Fecha de Corte no puede ser anterior a la Fecha de Inicio del contrato.")
-            else:
-                map_frec = {'Mensual': 1}
-                for fr in frecuencias_raw:
-                    parts = fr.split('-')
-                    if len(parts) == 2 and parts[1].strip().isdigit():
-                        map_frec[parts[0].strip()] = int(parts[1].strip())
-                f_meses = map_frec.get(v_frec.strip(), 1)
-                
-                v_tasa_mensual = (((1 + (float(v_tasa) / 100.0)) ** (1/12)) - 1)
-                tc_inicio = obtener_tc_cache(v_moneda, v_f_inicio) if v_moneda != "CLP" else 1.0
-                if tc_inicio <= 0: tc_inicio = 1.0
-                
-                c_fake = {
-                    'Codigo_Interno': 'SIM-VENC',
-                    'Empresa': 'Simulador',
-                    'Clase_Activo': 'Simulador',
-                    'Nombre': 'Simulacion Vencimientos',
-                    'Moneda': v_moneda,
-                    'Valor_Moneda_Inicio': tc_inicio,
-                    'Canon': float(v_canon),
-                    'Tasa': float(v_tasa) / 100.0,
-                    'Tasa_Mensual': v_tasa_mensual,
-                    'Plazo': int(v_plazo_calc),
-                    'Inicio': v_f_inicio.strftime('%Y-%m-%d'),
-                    'Fin': v_f_fin.strftime('%Y-%m-%d'),
-                    'Estado': 'Activo',
-                    'Tipo_Pago': v_tipo,
-                    'Frecuencia_Pago': v_frec,
-                    'Costos_Directos': 0.0,
-                    'Pagos_Anticipados': 0.0,
-                    'Costos_Desmantelamiento': 0.0,
-                    'Incentivos': 0.0,
-                    'Ajuste_ROU': 0.0
-                }
-                
-                tab_vp_calc, vp_val, rou_val = obtener_motor_financiero(c_fake)
-                
-                if tab_vp_calc.empty or 'Fecha' not in tab_vp_calc.columns:
-                    st.error("No se pudo generar el cuadro de amortización para la simulación.")
-                else:
-                    # Aplicamos exactamente la lógica de buckets de la Nota de Vencimientos
-                    f_t = pd.to_datetime(v_f_corte)
-                    futuros = tab_vp_calc[tab_vp_calc['Fecha'] > f_t].copy()
-                    
-                    if futuros.empty:
-                        st.warning(f"No hay flujos de pago futuros posteriores a la Fecha de Corte ({f_t.strftime('%d-%m-%Y')}) en la simulación.")
-                    else:
-                        tc_corte = obtener_tc_cache(v_moneda, f_t) if v_moneda != "CLP" else 1.0
-                        if tc_corte <= 0: tc_corte = 1.0
-                        
-                        saldo_remanente_hoy = tab_vp_calc[tab_vp_calc['Fecha'] <= f_t].iloc[-1]['S_Fin_Orig'] if not tab_vp_calc[tab_vp_calc['Fecha'] <= f_t].empty else tab_vp_calc.iloc[0]['S_Ini_Orig']
-                        
-                        # Flujos Descontados (Capital)
-                        futuros['Capital'] = futuros['S_Ini_Orig'] - futuros['S_Fin_Orig']
-                        futuros.iloc[-1, futuros.columns.get_loc('Capital')] += futuros.iloc[-1]['S_Fin_Orig']
-                        suma_distribuida_orig = futuros['Capital'].sum()
-                        
-                        diferencia_residual = saldo_remanente_hoy - suma_distribuida_orig
-                        if abs(diferencia_residual) > 0.01:
-                            futuros.iloc[-1, futuros.columns.get_loc('Capital')] += diferencia_residual
-                        
-                        # Valores nominales y descontados normalizados a la moneda del contrato
-                        futuros['Nominal_Moneda'] = futuros['Pago_Orig']
-                        futuros['Descontado_Moneda'] = futuros['Capital']
-                        
-                        # Valores en CLP
-                        futuros['Nominal_CLP'] = futuros['Pago_Orig'] * tc_corte
-                        futuros['Descontado_CLP'] = futuros['Capital'] * tc_corte
-                        
-                        # Lógica de buckets
-                        limite_12m = f_t + relativedelta(months=12)
-                        dias_pago = (futuros['Fecha'] - f_t).dt.days
-                        futuros['es_corriente'] = (dias_pago <= 90) | (futuros['Fecha'] <= limite_12m)
-                        
-                        def assign_bucket_sim(row):
-                            d = (row['Fecha'] - f_t).days
-                            if row['es_corriente']:
-                                if d <= 90: return ('90 días', 1)
-                                else: return ('90 días a 1 año', 2)
-                            else:
-                                if d <= 1095: return ('2 a 3 años', 3)
-                                elif d <= 2555: return ('4 a 7 años', 4)
-                                else: return ('Más de 7 años', 5)
-                                
-                        buckets_ord = futuros.apply(assign_bucket_sim, axis=1)
-                        futuros['Bucket'] = [b[0] for b in buckets_ord]
-                        futuros['Orden'] = [b[1] for b in buckets_ord]
-                        
-                        # Agrupación por buckets
-                        grouped = futuros.groupby(['Bucket', 'Orden']).agg({
-                            'Nominal_Moneda': 'sum',
-                            'Descontado_Moneda': 'sum',
-                            'Nominal_CLP': 'sum',
-                            'Descontado_CLP': 'sum'
-                        }).reset_index()
-                        
-                        # Rellenar buckets vacíos si no tienen cuotas para que la tabla sea siempre uniforme
-                        todas_filas = [
-                            {'Bucket': '90 días', 'Orden': 1},
-                            {'Bucket': '90 días a 1 año', 'Orden': 2},
-                            {'Bucket': '2 a 3 años', 'Orden': 3},
-                            {'Bucket': '4 a 7 años', 'Orden': 4},
-                            {'Bucket': 'Más de 7 años', 'Orden': 5}
-                        ]
-                        
-                        for fila in todas_filas:
-                            if not ((grouped['Bucket'] == fila['Bucket']) & (grouped['Orden'] == fila['Orden'])).any():
-                                new_row = pd.DataFrame([{
-                                    'Bucket': fila['Bucket'], 'Orden': fila['Orden'],
-                                    'Nominal_Moneda': 0.0, 'Descontado_Moneda': 0.0,
-                                    'Nominal_CLP': 0.0, 'Descontado_CLP': 0.0
-                                }])
-                                grouped = pd.concat([grouped, new_row], ignore_index=True)
-                                
-                        grouped = grouped.sort_values('Orden').reset_index(drop=True)
-                        
-                        # Totales Corrientes y No Corrientes
-                        tot_c_nom_mon = grouped.loc[0:1, 'Nominal_Moneda'].sum()
-                        tot_c_desc_mon = grouped.loc[0:1, 'Descontado_Moneda'].sum()
-                        tot_c_nom_clp = grouped.loc[0:1, 'Nominal_CLP'].sum()
-                        tot_c_desc_clp = grouped.loc[0:1, 'Descontado_CLP'].sum()
-                        
-                        tot_nc_nom_mon = grouped.loc[2:4, 'Nominal_Moneda'].sum()
-                        tot_nc_desc_mon = grouped.loc[2:4, 'Descontado_Moneda'].sum()
-                        tot_nc_nom_clp = grouped.loc[2:4, 'Nominal_CLP'].sum()
-                        tot_nc_desc_clp = grouped.loc[2:4, 'Descontado_CLP'].sum()
-                        
-                        # Construir DataFrame final legible
-                        filas_tabla = []
-                        
-                        # Corriente
-                        filas_tabla.append({
-                            'Rango Vencimiento': 'Hasta 90 días',
-                            f'No Descontado ({v_moneda})': grouped.loc[0, 'Nominal_Moneda'],
-                            f'Descontado ({v_moneda})': grouped.loc[0, 'Descontado_Moneda'],
-                            'No Descontado (CLP)': grouped.loc[0, 'Nominal_CLP'],
-                            'Descontado (CLP)': grouped.loc[0, 'Descontado_CLP']
-                        })
-                        filas_tabla.append({
-                            'Rango Vencimiento': 'De 90 días a 1 año',
-                            f'No Descontado ({v_moneda})': grouped.loc[1, 'Nominal_Moneda'],
-                            f'Descontado ({v_moneda})': grouped.loc[1, 'Descontado_Moneda'],
-                            'No Descontado (CLP)': grouped.loc[1, 'Nominal_CLP'],
-                            'Descontado (CLP)': grouped.loc[1, 'Descontado_CLP']
-                        })
-                        filas_tabla.append({
-                            'Rango Vencimiento': '👉 TOTAL CORRIENTE',
-                            f'No Descontado ({v_moneda})': tot_c_nom_mon,
-                            f'Descontado ({v_moneda})': tot_c_desc_mon,
-                            'No Descontado (CLP)': tot_c_nom_clp,
-                            'Descontado (CLP)': tot_c_desc_clp
-                        })
-                        
-                        # No Corriente
-                        filas_tabla.append({
-                            'Rango Vencimiento': 'De 1 a 3 años (2 a 3 años)',
-                            f'No Descontado ({v_moneda})': grouped.loc[2, 'Nominal_Moneda'],
-                            f'Descontado ({v_moneda})': grouped.loc[2, 'Descontado_Moneda'],
-                            'No Descontado (CLP)': grouped.loc[2, 'Nominal_CLP'],
-                            'Descontado (CLP)': grouped.loc[2, 'Descontado_CLP']
-                        })
-                        filas_tabla.append({
-                            'Rango Vencimiento': 'De 3 a 7 años (4 a 7 años)',
-                            f'No Descontado ({v_moneda})': grouped.loc[3, 'Nominal_Moneda'],
-                            f'Descontado ({v_moneda})': grouped.loc[3, 'Descontado_Moneda'],
-                            'No Descontado (CLP)': grouped.loc[3, 'Nominal_CLP'],
-                            'Descontado (CLP)': grouped.loc[3, 'Descontado_CLP']
-                        })
-                        filas_tabla.append({
-                            'Rango Vencimiento': 'Más de 7 años',
-                            f'No Descontado ({v_moneda})': grouped.loc[4, 'Nominal_Moneda'],
-                            f'Descontado ({v_moneda})': grouped.loc[4, 'Descontado_Moneda'],
-                            'No Descontado (CLP)': grouped.loc[4, 'Nominal_CLP'],
-                            'Descontado (CLP)': grouped.loc[4, 'Descontado_CLP']
-                        })
-                        filas_tabla.append({
-                            'Rango Vencimiento': '👉 TOTAL NO CORRIENTE',
-                            f'No Descontado ({v_moneda})': tot_nc_nom_mon,
-                            f'Descontado ({v_moneda})': tot_nc_desc_mon,
-                            'No Descontado (CLP)': tot_nc_nom_clp,
-                            'Descontado (CLP)': tot_nc_desc_clp
-                        })
-                        
-                        # Gran Total
-                        gran_tot_nom_mon = tot_c_nom_mon + tot_nc_nom_mon
-                        gran_tot_desc_mon = tot_c_desc_mon + tot_nc_desc_mon
-                        gran_tot_nom_clp = tot_c_nom_clp + tot_nc_nom_clp
-                        gran_tot_desc_clp = tot_c_desc_clp + tot_nc_desc_clp
-                        
-                        filas_tabla.append({
-                            'Rango Vencimiento': '⭐ GRAN TOTAL',
-                            f'No Descontado ({v_moneda})': gran_tot_nom_mon,
-                            f'Descontado ({v_moneda})': gran_tot_desc_mon,
-                            'No Descontado (CLP)': gran_tot_nom_clp,
-                            'Descontado (CLP)': gran_tot_desc_clp
-                        })
-                        
-                        df_venc_sim = pd.DataFrame(filas_tabla)
-                        
-                        # Costo financiero por devengar (nominal vs vp)
-                        intereses_pendientes_mon = gran_tot_nom_mon - gran_tot_desc_mon
-                        intereses_pendientes_clp = gran_tot_nom_clp - gran_tot_desc_clp
-                        
-                        st.subheader(f"Distribución de Vencimientos al {f_t.strftime('%d-%m-%Y')}")
-                        st.write("A continuación se muestra el desglose corriente / no corriente comparativo. Los montos están expresados tanto en la moneda del contrato como en CLP (conversión al tipo de cambio de la fecha de corte).")
-                        
-                        # Formato de visualización
-                        st.dataframe(df_venc_sim.style.format({
-                            f'No Descontado ({v_moneda})': "{:,.2f}",
-                            f'Descontado ({v_moneda})': "{:,.2f}",
-                            'No Descontado (CLP)': "{:,.0f}",
-                            'Descontado (CLP)': "{:,.0f}"
-                        }), use_container_width=True)
-                        
-                        # Descarga Excel y Word en dos columnas
-                        col_btn1, col_btn2 = st.columns(2)
-                        
-                        with col_btn1:
-                            import io
-                            output_vxl = io.BytesIO()
-                            with pd.ExcelWriter(output_vxl, engine='xlsxwriter') as writer:
-                                df_venc_sim.to_excel(writer, index=False, sheet_name='Simulacion_Vencimientos')
-                            excel_venc_data = output_vxl.getvalue()
-                            
-                            st.download_button(
-                                label="📥 Descargar Distribución (Excel)",
-                                data=excel_venc_data,
-                                file_name="Simulacion_Vencimientos_NIIF16.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="down_venc_sim_btn",
-                                use_container_width=True
-                            )
-                            
-                        with col_btn2:
-                            # Generar Memoria Word
-                            import docx
-                            from docx.shared import Pt, Inches
-                            import datetime
-                            
-                            doc = docx.Document()
-                            doc.add_heading("MEMORIA DE CÁLCULO - DISTRIBUCIÓN DE VENCIMIENTOS NIIF 16", 0)
-                            doc.add_paragraph(f"Fecha de cálculo: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                            
-                            doc.add_heading("1. Variables de Entrada", level=1)
-                            doc.add_paragraph(f"Moneda del Contrato: {v_moneda}")
-                            doc.add_paragraph(f"Fecha de Inicio del Contrato: {v_f_inicio.strftime('%Y-%m-%d')}")
-                            doc.add_paragraph(f"Fecha de Término del Contrato: {v_f_fin.strftime('%Y-%m-%d')}")
-                            doc.add_paragraph(f"Plazo Total del Contrato: {v_plazo_calc} meses")
-                            doc.add_paragraph(f"Canon Mensual: {v_canon:,.2f} {v_moneda}")
-                            doc.add_paragraph(f"Tasa Efectiva Anual: {v_tasa:.4f}%")
-                            doc.add_paragraph(f"Tasa Efectiva Mensual: {(v_tasa_mensual*100):.6f}%")
-                            doc.add_paragraph(f"Frecuencia de Pago: {v_frec}")
-                            doc.add_paragraph(f"Tipo de Pago: {v_tipo}")
-                            doc.add_paragraph(f"Fecha de Corte de Reporte: {v_f_corte.strftime('%Y-%m-%d')}")
-                            if v_moneda != "CLP":
-                                doc.add_paragraph(f"Tipo de Cambio de Corte: {tc_corte:,.2f} al {v_f_corte.strftime('%Y-%m-%d')}")
-                                
-                            doc.add_heading("2. Fórmulas Matemáticas y Desarrollo Numérico", level=1)
-                            doc.add_heading("A. Equivalencia de Tasa de Interés Periódica", level=2)
-                            doc.add_paragraph("Para mantener la equivalencia financiera del dinero en el tiempo de forma exacta bajo interés compuesto, la tasa de descuento periódica mensual se obtiene a partir de la Tasa Efectiva Anual (TEA) mediante la siguiente fórmula:")
-                            doc.add_paragraph("Fórmula: i_mensual = [ (1 + TEA) ^ (1 / 12) ] - 1")
-                            doc.add_paragraph(f"Desarrollo Numérico: i_mensual = [ (1 + {v_tasa/100:.6f}) ^ (1 / 12) ] - 1")
-                            doc.add_paragraph(f"                  = [ ({1 + v_tasa/100:.6f}) ^ 0.083333 ] - 1")
-                            doc.add_paragraph(f"                  = {v_tasa_mensual:.8f}  =>  {(v_tasa_mensual*100):.6f}% mensual")
-                            
-                            doc.add_heading("B. Valor Presente de un Flujo Futuro (Descuento Financiero)", level=2)
-                            doc.add_paragraph("Cada cuota futura se descuenta a valor presente para separar la porción de principal (pasivo descontado) de la carga financiera. El descuento del flujo pagadero en el período 't' se calcula mediante:")
-                            doc.add_paragraph("Fórmula: VP_t = Cuota / [ (1 + i_mensual) ^ t ]")
-                            
-                            t_muestra = 1
-                            vp_muestra = float(v_canon) / ((1 + v_tasa_mensual) ** t_muestra)
-                            interes_muestra = float(v_canon) - vp_muestra
-                            
-                            doc.add_paragraph(f"Ejemplo de cálculo para la primera cuota futura (t = {t_muestra}):")
-                            doc.add_paragraph(f"  - Flujo Nominal (No Descontado): {v_canon:,.2f} {v_moneda}")
-                            doc.add_paragraph(f"  - Desarrollo Numérico: VP_1 = {v_canon:,.2f} / [ (1 + {v_tasa_mensual:.8f}) ^ 1 ]")
-                            doc.add_paragraph(f"                        = {v_canon:,.2f} / {1 + v_tasa_mensual:.8f}")
-                            doc.add_paragraph(f"                        = {vp_muestra:,.2f} {v_moneda} (Amortización de Principal)")
-                            doc.add_paragraph(f"  - Interés del Periodo: {v_canon:,.2f} - {vp_muestra:,.2f} = {interes_muestra:,.2f} {v_moneda}")
-                            
-                            doc.add_heading("3. Lógica de Clasificación NIIF 16", level=1)
-                            doc.add_paragraph("La Nota de Vencimientos clasifica las cuotas futuras contadas a partir de la Fecha de Corte en dos grandes grupos:")
-                            doc.add_paragraph("  - Corriente (Corto Plazo): Vencimientos de hasta 1 año (Hasta 90 días y De 90 días a 1 año).")
-                            doc.add_paragraph("  - No Corriente (Largo Plazo): Vencimientos superiores a 1 año (De 1 a 3 años, De 3 a 7 años y Más de 7 años).")
-                            doc.add_paragraph("En la simulación No Descontada, se reporta la suma bruta de los flujos nominales de caja (Canon de arriendo).")
-                            doc.add_paragraph("En la simulación Descontada, se reporta la amortización de principal (disminución del pasivo por Valor Presente) para cada período.")
-                            
-                            doc.add_heading("4. Tabla de Resultados Comparativos", level=1)
-                            
-                            # Insertar tabla en Word
-                            table = doc.add_table(rows=1, cols=5)
-                            table.style = 'Light Shading Accent 1'
-                            hdr_cells = table.rows[0].cells
-                            hdr_cells[0].text = 'Rango Vencimiento'
-                            hdr_cells[1].text = f'No Desc ({v_moneda})'
-                            hdr_cells[2].text = f'Desc ({v_moneda})'
-                            hdr_cells[3].text = 'No Desc (CLP)'
-                            hdr_cells[4].text = 'Desc (CLP)'
-                            
-                            for index, row in df_venc_sim.iterrows():
-                                row_cells = table.add_row().cells
-                                row_cells[0].text = str(row['Rango Vencimiento'])
-                                row_cells[1].text = f"{row[f'No Descontado ({v_moneda})']:,.2f}"
-                                row_cells[2].text = f"{row[f'Descontado ({v_moneda})']:,.2f}"
-                                row_cells[3].text = f"{row['No Descontado (CLP)']:,.0f}"
-                                row_cells[4].text = f"{row['Descontado (CLP)']:,.0f}"
-                                
-                            doc.add_paragraph("")
-                            
-                            doc.add_heading("4. Resumen de Carga Financiera", level=1)
-                            doc.add_paragraph(f"Total Pasivo Descontado (Valor Presente) a la fecha de corte: {gran_tot_desc_mon:,.2f} {v_moneda} (Equivalentemente {gran_tot_desc_clp:,.0f} CLP)")
-                            doc.add_paragraph(f"Total Flujo Bruto Nominal Futuro: {gran_tot_nom_mon:,.2f} {v_moneda} (Equivalentemente {gran_tot_nom_clp:,.0f} CLP)")
-                            doc.add_paragraph(f"Costo Financiero (Intereses) por Devengar: {intereses_pendientes_mon:,.2f} {v_moneda} ({intereses_pendientes_clp:,.0f} CLP) que representa un descuento del -{((intereses_pendientes_mon / gran_tot_nom_mon)*100 if gran_tot_nom_mon > 0 else 0):.2f}% sobre el total nominal de los flujos.")
-                            
-                            doc.add_paragraph("")
-                            doc.add_paragraph("Este reporte de simulación constituye papel de trabajo y soporte técnico de auditoría bajo la normativa NIIF 16.")
-                            
-                            output_doc = io.BytesIO()
-                            doc.save(output_doc)
-                            word_venc_data = output_doc.getvalue()
-                            
-                            st.download_button(
-                                label="📄 Descargar Memoria (Word)",
-                                data=word_venc_data,
-                                file_name=f"Reporte_Vencimientos_{datetime.datetime.now().strftime('%Y%m%d')}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                key="down_venc_sim_word_btn",
-                                use_container_width=True
-                            )
-                        
-                        # Fin de simulación de vencimientos
-
 
 def modulo_perfil():
     st.header("⚙️ Mi Perfil")

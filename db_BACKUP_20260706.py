@@ -1,6 +1,5 @@
 import sqlite3
 import pandas as pd
-import streamlit as st
 
 DB_NAME = "ifrs16_platinum.db"
 
@@ -165,7 +164,6 @@ def obtener_usuarios():
     conn.close()
     return df.to_dict('records')
 
-@st.cache_data
 def obtener_parametros(tipo):
     conn = conectar()
     df = pd.read_sql(f"SELECT valor FROM config_params WHERE tipo='{tipo}'", conn)
@@ -209,7 +207,6 @@ def agregar_parametro(tipo, valor):
     conn.execute("INSERT OR IGNORE INTO config_params VALUES (?,?)", (tipo, valor))
     conn.commit()
     conn.close()
-    st.cache_data.clear()  # Invalida caché de obtener_parametros
 
 def eliminar_parametro(tipo, valor):
     conn = conectar()
@@ -235,7 +232,6 @@ def eliminar_parametro(tipo, valor):
     conn.execute("DELETE FROM config_params WHERE tipo=? AND valor=?", (tipo, valor))
     conn.commit()
     conn.close()
-    st.cache_data.clear()  # Invalida caché de obtener_parametros
     return True
 
 def invocar_columna_extra(nombre):
@@ -248,31 +244,12 @@ def invocar_columna_extra(nombre):
     conn.execute("INSERT OR IGNORE INTO config_params VALUES (?,?)", ('CAMPO_EXTRA', nombre))
     conn.commit()
     conn.close()
-    st.cache_data.clear()  # Invalida caché de obtener_parametros
 
 def cargar_monedas():
     conn = conectar()
     df = pd.read_sql("SELECT * FROM monedas ORDER BY fecha DESC", conn)
     conn.close()
     return df
-
-def obtener_tc_spot(moneda, fecha_str):
-    """Lookup optimizado de tipo de cambio via SQL directo.
-    Retorna el valor mas reciente de 'moneda' en o antes de 'fecha_str' (formato YYYY-MM-DD).
-    Logica identica a: df[(df['moneda']==moneda) & (df['fecha']<=fecha_str)].iloc[0]['valor']
-    pero sin cargar toda la tabla en memoria.
-    """
-    if moneda == "CLP":
-        return 1.0
-    conn = conectar()
-    c = conn.cursor()
-    c.execute(
-        "SELECT valor FROM monedas WHERE moneda = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1",
-        (moneda, fecha_str)
-    )
-    row = c.fetchone()
-    conn.close()
-    return float(row['valor']) if row else 0.0
 
 def insertar_moneda(f, m, v):
     conn = conectar()
