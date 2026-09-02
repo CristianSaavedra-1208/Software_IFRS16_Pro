@@ -278,22 +278,22 @@ def verificar_baseline():
 
         # Comparar VP y ROU
         if abs(round2(vp) - b["vp"]) > TOLERANCIA_CLP:
-            diferencias.append(f"{cid}: VP → baseline={b['vp']:,.2f} | actual={round2(vp):,.2f} | diff={round2(vp)-b['vp']:+,.2f}")
+            diferencias.append(f"{cid}: VP -> baseline={b['vp']:,.2f} | actual={round2(vp):,.2f} | diff={round2(vp)-b['vp']:+,.2f}")
 
         if abs(round2(rou) - b["rou"]) > TOLERANCIA_CLP:
-            diferencias.append(f"{cid}: ROU → baseline={b['rou']:,.2f} | actual={round2(rou):,.2f} | diff={round2(rou)-b['rou']:+,.2f}")
+            diferencias.append(f"{cid}: ROU -> baseline={b['rou']:,.2f} | actual={round2(rou):,.2f} | diff={round2(rou)-b['rou']:+,.2f}")
 
         # Comparar tabla hash
         h_actual = df_hash(tab)
         if h_actual != b["tabla_hash"]:
-            diferencias.append(f"{cid}: TABLA FINANCIERA CAMBIÓ → baseline_hash={b['tabla_hash']} | actual_hash={h_actual}")
+            diferencias.append(f"{cid}: TABLA FINANCIERA CAMBIÓ -> baseline_hash={b['tabla_hash']} | actual_hash={h_actual}")
 
         # Comparar libro mayor
         for campo, val_base in b["libro_mayor"].items():
             val_actual = {"rou_bruto": rb, "amort_acum": aa, "pasivo": pasivo}[campo]
             if abs(round2(val_actual) - val_base) > TOLERANCIA_CLP:
                 diferencias.append(
-                    f"{cid}: libro_mayor.{campo} → baseline={val_base:,.2f} | actual={round2(val_actual):,.2f} | diff={round2(val_actual)-val_base:+,.2f}"
+                    f"{cid}: libro_mayor.{campo} -> baseline={val_base:,.2f} | actual={round2(val_actual):,.2f} | diff={round2(val_actual)-val_base:+,.2f}"
                 )
 
         ok_count += 1
@@ -314,7 +314,7 @@ def verificar_baseline():
             val_base = baseline["tc_muestras"].get(mon, {}).get(str(fd), None)
             if val_base is not None and abs(val_actual - val_base) > TOLERANCIA_CLP:
                 diferencias.append(
-                    f"TC {mon}@{fd} → baseline={val_base:,.4f} | actual={val_actual:,.4f}"
+                    f"TC {mon}@{fd} -> baseline={val_base:,.4f} | actual={val_actual:,.4f}"
                 )
 
     # 3. Verificar totales de reconciliación
@@ -329,7 +329,7 @@ def verificar_baseline():
     if b_recon and "rou_bruto_total" in b_recon:
         if abs(rou_bruto_tot - b_recon["rou_bruto_total"]) > TOLERANCIA_CLP:
             diferencias.append(
-                f"RECON ROU Bruto Total → baseline={b_recon['rou_bruto_total']:,.2f} | actual={rou_bruto_tot:,.2f}"
+                f"RECON ROU Bruto Total -> baseline={b_recon['rou_bruto_total']:,.2f} | actual={rou_bruto_tot:,.2f}"
             )
 
     # ─── Resultado final ──────────────────────────────────────────────────────
