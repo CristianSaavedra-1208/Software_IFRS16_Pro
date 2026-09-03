@@ -1372,27 +1372,44 @@ def modulo_contratos():
             inc = 0.0
             
             if st.form_submit_button("Registrar"):
-                diff = relativedelta(f_f, f_i)
-                p = diff.years * 12 + diff.months
-                if diff.days >= 15: p += 1
-                nuevo_c = {
-                    "Codigo_Interno": generar_codigo_correlativo(emp, cargar_contratos()), 
-                    "Empresa": emp, "Clase_Activo": clase, "ID": id_p, "Proveedor": prov, 
-                    "Cod1": "", "Cod2": "", "Nombre": nom, "Moneda": mon, "Canon": can, 
-                    "Tasa": tas/100, "Tasa_Mensual": pow(1+tas/100, 1/12)-1, 
-                    "Valor_Moneda_Inicio": obtener_tc_cache(mon, f_i), "Plazo": p, 
-                    "Inicio": f_i.strftime('%Y-%m-%d'), "Fin": f_f.strftime('%Y-%m-%d'), 
-                    "Estado": "Activo", "Tipo_Pago": t_pago, 
-                    "Costos_Directos": cd, "Pagos_Anticipados": pa, 
-                    "Costos_Desmantelamiento": cdesm, "Incentivos": inc,
-                    "Frecuencia_Pago": frec
-                }
-                nuevo_c.update(extra_vals)
-                insertar_contrato(nuevo_c, st.session_state.get('user', 'Sistema/Usuario'))
-                if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
-                st.session_state.success_msg = "Contrato creado manualmente"
-                st.rerun()
+                # 1. Validaciones preventivas para evitar caídas o cierres de sesión
+                if not nom or not str(nom).strip():
+                    st.error("❌ El 'Nombre Contrato' es obligatorio.")
+                elif can is None or can <= 0:
+                    st.error("❌ El 'Canon' debe ser un valor numérico mayor a 0.")
+                elif f_f <= f_i:
+                    st.error("❌ La fecha de 'Fin' debe ser estrictamente posterior a la fecha de 'Inicio'.")
+                elif tas < 0:
+                    st.error("❌ La 'Tasa Anual %' no puede ser negativa.")
+                else:
+                    try:
+                        diff = relativedelta(f_f, f_i)
+                        p = diff.years * 12 + diff.months
+                        if diff.days >= 15: p += 1
+                        if p <= 0: p = 1
+                        
+                        nuevo_cod = generar_codigo_correlativo(emp, cargar_contratos())
+                        nuevo_c = {
+                            "Codigo_Interno": nuevo_cod, 
+                            "Empresa": emp, "Clase_Activo": clase, "ID": str(id_p).strip(), "Proveedor": str(prov).strip(), 
+                            "Cod1": "", "Cod2": "", "Nombre": str(nom).strip(), "Moneda": mon, "Canon": float(can), 
+                            "Tasa": tas/100, "Tasa_Mensual": pow(1+tas/100, 1/12)-1, 
+                            "Valor_Moneda_Inicio": obtener_tc_cache(mon, f_i), "Plazo": p, 
+                            "Inicio": f_i.strftime('%Y-%m-%d'), "Fin": f_f.strftime('%Y-%m-%d'), 
+                            "Estado": "Activo", "Tipo_Pago": t_pago, 
+                            "Costos_Directos": cd, "Pagos_Anticipados": pa, 
+                            "Costos_Desmantelamiento": cdesm, "Incentivos": inc,
+                            "Frecuencia_Pago": frec
+                        }
+                        nuevo_c.update(extra_vals)
+                        insertar_contrato(nuevo_c, st.session_state.get('user', 'Sistema/Usuario'))
+                        if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                        if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                        st.cache_data.clear()
+                        st.session_state.success_msg = f"✅ Contrato {nuevo_cod} creado exitosamente."
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Ocurrió un error al guardar el contrato: {e}")
 
     with t2:
         st.subheader("Carga Masiva de Contratos")
@@ -1581,70 +1598,65 @@ def modulo_contratos():
                     f_rem_dt = pd.to_datetime(f_rem)
                     
                     if f_rem_dt <= f_i:
-                        st.error("La fecha de modificación debe ser estrictamente posterior a la fecha de inicio original.")
-                        st.stop()
-                        
-                    # Simulamos el contrato hasta la fecha de remedición para obtener los saldos de corte
-                    tab_old, vp_old, rou_old = obtener_motor_financiero(c_sel)
-                    
-                    past_tab = tab_old[tab_old['Fecha'] < f_rem_dt]
-                    if past_tab.empty:
-                        st.error("La fecha seleccionada no permite capturar saldos históricos.")
-                        st.stop()
-                        
-                    old_pasivo_orig = past_tab.iloc[-1]['S_Fin_Orig']
-                    old_amort_acum_orig = past_tab['Dep_Orig'].sum()
-                    old_rou_net_orig = rou_old - old_amort_acum_orig
-                    
-                    tc_ini = float(c_sel['Valor_Moneda_Inicio']) if float(c_sel['Valor_Moneda_Inicio']) > 0 else 1.0
-                    tc_f_rem = obtener_tc_cache(c_sel['Moneda'], f_rem_dt)
-                    if tc_f_rem == 0: tc_f_rem = 1.0
-                    
-                    diff = relativedelta(n_fin, f_rem_dt)
-                    n_p = diff.years * 12 + diff.months
-                    if diff.days >= 15: n_p += 1
-                    t_m = pow(1+n_tas/100, 1/12)-1
-                    
-                    # Lógica de Reducción de Alcance (Terminación Parcial)
-                    baja_pasivo_uf = 0.0
-                    baja_rou_uf = 0.0
-                    pl_efecto_clp = 0.0
-                    
-                    f_fin_old = pd.to_datetime(c_sel['Fin'])
-                    if n_fin < f_fin_old.date():
-                        diff_old = relativedelta(f_fin_old, f_rem_dt)
-                        n_p_old = diff_old.years * 12 + diff_old.months
-                        if diff_old.days >= 15: n_p_old += 1
-                        
-                        if n_p_old > 0:
-                            p_dec = max(0.0, (n_p_old - n_p) / n_p_old)
-                            baja_pasivo_uf = old_pasivo_orig * p_dec
-                            baja_rou_uf = old_rou_net_orig * p_dec
-                            # P&L in official currency (CLP) -> Pasivo decreases at current spot, ROU decreases at historical rate
-                            pl_efecto_clp = (baja_pasivo_uf * tc_f_rem) - (baja_rou_uf * tc_ini)
-                            
-                            old_pasivo_orig -= baja_pasivo_uf
-                            old_rou_net_orig -= baja_rou_uf
-                    
-                    # Cálculo del Puente (Ajuste ROU base funcional)
-                    ajuste_rou_uf = old_rou_net_orig * (tc_ini / tc_f_rem) - old_pasivo_orig
-                    
-                    from db import insertar_remedicion, actualizar_contrato_remedicion
-                    
-                    # 1. Registrar el evento en el historial de remediciones con efectos P&L
-                    insertar_remedicion(c_sel['Codigo_Interno'], f_rem.strftime('%Y-%m-%d'), n_can, n_tas/100, t_m, n_fin.strftime('%Y-%m-%d'), n_p, ajuste_rou_uf, baja_pasivo_uf, baja_rou_uf, pl_efecto_clp, st.session_state.get('user', 'Sistema/Usuario'))
-                    
-                    # 2. Actualizar la cabecera del contrato original con la nueva fecha de madurez, para que los filtros de app sigan viéndolo activo hasta n_fin
-                    # Importante: No machacamos Inicio, Canon base ni VP original. Solo los parámetros que avisan cuándo termina.
-                    # CRITICO: El Plazo se mantiene ESTRICTAMENTE igual para no corromper la matemática del VP original.
-                    actualizar_contrato_remedicion(c_sel['Codigo_Interno'], c_sel['Canon'], c_sel['Tasa'], c_sel['Tasa_Mensual'], n_fin.strftime('%Y-%m-%d'), c_sel['Plazo'], f_rem.strftime('%Y-%m-%d'))
-                    
-                    st.success(f"¡Contrato {c_sel['Codigo_Interno']} modificado exitosamente! (Se agregó el tramo de modificación a su flujo histórico)")
-                    # Limpiar estado del motor financiero para forzar re-cálculo
-                    if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
-                    st.cache_data.clear()
-                    st.rerun()
+                        st.error("❌ La fecha de modificación debe ser estrictamente posterior a la fecha de inicio original.")
+                    else:
+                        try:
+                            # Simulamos el contrato hasta la fecha de remedición para obtener los saldos de corte
+                            tab_old, vp_old, rou_old = obtener_motor_financiero(c_sel)
+                            if tab_old.empty or 'Fecha' not in tab_old.columns:
+                                st.error("❌ No se pudo generar la tabla de amortización base del contrato (tabla vacía o plazo inválido).")
+                            else:
+                                past_tab = tab_old[tab_old['Fecha'] < f_rem_dt]
+                                if past_tab.empty:
+                                    st.error("❌ La fecha seleccionada no permite capturar saldos históricos previos.")
+                                else:
+                                    old_pasivo_orig = past_tab.iloc[-1]['S_Fin_Orig']
+                                    old_amort_acum_orig = past_tab['Dep_Orig'].sum()
+                                    old_rou_net_orig = rou_old - old_amort_acum_orig
+                                    
+                                    tc_ini = float(c_sel['Valor_Moneda_Inicio']) if float(c_sel['Valor_Moneda_Inicio']) > 0 else 1.0
+                                    tc_f_rem = obtener_tc_cache(c_sel['Moneda'], f_rem_dt)
+                                    if tc_f_rem == 0: tc_f_rem = 1.0
+                                    
+                                    diff = relativedelta(n_fin, f_rem_dt)
+                                    n_p = diff.years * 12 + diff.months
+                                    if diff.days >= 15: n_p += 1
+                                    t_m = pow(1+n_tas/100, 1/12)-1
+                                    
+                                    # Lógica de Reducción de Alcance (Terminación Parcial)
+                                    baja_pasivo_uf = 0.0
+                                    baja_rou_uf = 0.0
+                                    pl_efecto_clp = 0.0
+                                    
+                                    f_fin_old = pd.to_datetime(c_sel['Fin'])
+                                    if n_fin < f_fin_old.date():
+                                        diff_old = relativedelta(f_fin_old, f_rem_dt)
+                                        n_p_old = diff_old.years * 12 + diff_old.months
+                                        if diff_old.days >= 15: n_p_old += 1
+                                        
+                                        if n_p_old > 0:
+                                            p_dec = max(0.0, (n_p_old - n_p) / n_p_old)
+                                            baja_pasivo_uf = old_pasivo_orig * p_dec
+                                            baja_rou_uf = old_rou_net_orig * p_dec
+                                            pl_efecto_clp = (baja_pasivo_uf * tc_f_rem) - (baja_rou_uf * tc_ini)
+                                            
+                                            old_pasivo_orig -= baja_pasivo_uf
+                                            old_rou_net_orig -= baja_rou_uf
+                                    
+                                    # Cálculo del Puente (Ajuste ROU base funcional)
+                                    ajuste_rou_uf = old_rou_net_orig * (tc_ini / tc_f_rem) - old_pasivo_orig
+                                    
+                                    from db import insertar_remedicion, actualizar_contrato_remedicion
+                                    insertar_remedicion(c_sel['Codigo_Interno'], f_rem.strftime('%Y-%m-%d'), n_can, n_tas/100, t_m, n_fin.strftime('%Y-%m-%d'), n_p, ajuste_rou_uf, baja_pasivo_uf, baja_rou_uf, pl_efecto_clp, st.session_state.get('user', 'Sistema/Usuario'))
+                                    actualizar_contrato_remedicion(c_sel['Codigo_Interno'], c_sel['Canon'], c_sel['Tasa'], c_sel['Tasa_Mensual'], n_fin.strftime('%Y-%m-%d'), c_sel['Plazo'], f_rem.strftime('%Y-%m-%d'))
+                                    
+                                    if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                                    st.cache_data.clear()
+                                    st.session_state.success_msg = f"✅ ¡Contrato {c_sel['Codigo_Interno']} modificado exitosamente!"
+                                    st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al procesar la modificación: {e}")
         else:
             st.info("No hay contratos activos.")
             
@@ -1767,95 +1779,114 @@ def modulo_contratos():
                 if st.button("Procesar Modificaciones Masivas", type="primary"):
                     try:
                         df_in = pd.read_excel(arch_mod)
-                        df_cambios = df_in.dropna(subset=['Fecha_Efectiva_Modificacion']).copy()
+                        # Normalizar nombres de columnas limpiando espacios en blanco
+                        df_in.columns = [str(c).strip() for c in df_in.columns]
                         
-                        if df_cambios.empty:
-                            st.warning("No se detectó ninguna fila con 'Fecha_Efectiva_Modificacion'. No se realizaron cambios.")
+                        col_f_rem = None
+                        for c in df_in.columns:
+                            if c.lower() in ['fecha_efectiva_modificacion', 'fecha efectiva modificacion', 'fecha_efectiva', 'fecha efectiva']:
+                                col_f_rem = c
+                                break
+                                
+                        if not col_f_rem:
+                            st.error("❌ No se encontró la columna 'Fecha_Efectiva_Modificacion' en el archivo Excel.")
                         else:
-                            mapa_c = {f"{c['Codigo_Interno']}": c for c in contratos_activos}
-                            exitos = 0
-                            errores = []
+                            df_cambios = df_in[df_in[col_f_rem].notna() & (df_in[col_f_rem].astype(str).str.strip() != '') & (df_in[col_f_rem].astype(str).str.strip().str.lower() != 'nat') & (df_in[col_f_rem].astype(str).str.strip().str.lower() != 'none')].copy()
                             
-                            from db import insertar_remedicion, actualizar_contrato_remedicion
-                            
-                            for idx, r in df_cambios.iterrows():
-                                cid = str(r['Codigo_Interno']).strip()
-                                if cid not in mapa_c:
-                                    errores.append(f"Fila {idx+2}: Contrato {cid} inactivo o no existe.")
-                                    continue
-                                    
-                                c_sel = mapa_c[cid]
-                                f_rem = pd.to_datetime(r['Fecha_Efectiva_Modificacion'])
-                                f_i = pd.to_datetime(c_sel['Inicio'])
+                            if df_cambios.empty:
+                                st.warning("No se detectó ninguna fila con 'Fecha_Efectiva_Modificacion'. No se realizaron cambios.")
+                            else:
+                                mapa_c = {f"{c['Codigo_Interno']}": c for c in contratos_activos}
+                                exitos = 0
+                                errores = []
                                 
-                                if f_rem <= f_i:
-                                    errores.append(f"Contrato {cid}: La fecha efectiva ({f_rem.date()}) no puede ser anterior al inicio ({f_i.date()}).")
-                                    continue
-                                    
-                                n_can = float(r['Nuevo_Canon']) if pd.notna(r.get('Nuevo_Canon')) else float(c_sel['Canon'])
-                                n_tas_pct = float(r['Nueva_Tasa_Anual_%']) if pd.notna(r.get('Nueva_Tasa_Anual_%')) else float(c_sel['Tasa']*100)
-                                n_fin = pd.to_datetime(r['Nueva_Fecha_Fin']) if pd.notna(r.get('Nueva_Fecha_Fin')) else pd.to_datetime(c_sel['Fin'])
+                                from db import insertar_remedicion, actualizar_contrato_remedicion
                                 
-                                # Simulacion
-                                tab_old, vp_old, rou_old = obtener_motor_financiero(c_sel)
-                                past_tab = tab_old[tab_old['Fecha'] < f_rem]
-                                
-                                if past_tab.empty:
-                                    errores.append(f"Contrato {cid}: No existen saldos históricos previos a {f_rem.date()}.")
-                                    continue
-                                    
-                                old_pasivo_orig = past_tab.iloc[-1]['S_Fin_Orig']
-                                old_amort_acum_orig = past_tab['Dep_Orig'].sum()
-                                old_rou_net_orig = rou_old - old_amort_acum_orig
-                                
-                                tc_ini = float(c_sel['Valor_Moneda_Inicio']) if float(c_sel['Valor_Moneda_Inicio']) > 0 else 1.0
-                                tc_f_rem = obtener_tc_cache(c_sel['Moneda'], f_rem)
-                                if tc_f_rem == 0: tc_f_rem = 1.0
-                                
-                                diff = relativedelta(n_fin, f_rem)
-                                n_p = diff.years * 12 + diff.months
-                                if diff.days >= 15: n_p += 1
-                                t_m = pow(1+n_tas_pct/100, 1/12)-1
-                                
-                                # Lógica de Reducción de Alcance Módulo Masivo
-                                baja_pasivo_uf = 0.0
-                                baja_rou_uf = 0.0
-                                pl_efecto_clp = 0.0
-                                
-                                f_fin_old = pd.to_datetime(c_sel['Fin'])
-                                if n_fin < f_fin_old:
-                                    diff_old = relativedelta(f_fin_old, f_rem)
-                                    n_p_old = diff_old.years * 12 + diff_old.months
-                                    if diff_old.days >= 15: n_p_old += 1
-                                    
-                                    if n_p_old > 0:
-                                        p_dec = max(0.0, (n_p_old - n_p) / n_p_old)
-                                        baja_pasivo_uf = old_pasivo_orig * p_dec
-                                        baja_rou_uf = old_rou_net_orig * p_dec
-                                        pl_efecto_clp = (baja_pasivo_uf * tc_f_rem) - (baja_rou_uf * tc_ini)
+                                for idx, r in df_cambios.iterrows():
+                                    cid = str(r.get('Codigo_Interno', '')).strip()
+                                    try:
+                                        if not cid or cid not in mapa_c:
+                                            errores.append(f"Fila {idx+2}: Contrato '{cid}' inactivo o no existe.")
+                                            continue
+                                            
+                                        c_sel = mapa_c[cid]
+                                        f_rem = pd.to_datetime(r[col_f_rem])
+                                        f_i = pd.to_datetime(c_sel['Inicio'])
                                         
-                                        old_pasivo_orig -= baja_pasivo_uf
-                                        old_rou_net_orig -= baja_rou_uf
+                                        if f_rem <= f_i:
+                                            errores.append(f"Contrato {cid}: La fecha efectiva ({f_rem.date()}) no puede ser anterior al inicio ({f_i.date()}).")
+                                            continue
+                                            
+                                        n_can = float(r['Nuevo_Canon']) if ('Nuevo_Canon' in r and pd.notna(r.get('Nuevo_Canon'))) else float(c_sel['Canon'])
+                                        n_tas_pct = float(r['Nueva_Tasa_Anual_%']) if ('Nueva_Tasa_Anual_%' in r and pd.notna(r.get('Nueva_Tasa_Anual_%'))) else float(c_sel['Tasa']*100)
+                                        n_fin = pd.to_datetime(r['Nueva_Fecha_Fin']) if ('Nueva_Fecha_Fin' in r and pd.notna(r.get('Nueva_Fecha_Fin'))) else pd.to_datetime(c_sel['Fin'])
+                                        
+                                        # Simulación de tabla histórica
+                                        tab_old, vp_old, rou_old = obtener_motor_financiero(c_sel)
+                                        if tab_old.empty or 'Fecha' not in tab_old.columns:
+                                            errores.append(f"Contrato {cid}: No posee tabla de amortización base válida o el plazo es 0.")
+                                            continue
+                                            
+                                        past_tab = tab_old[tab_old['Fecha'] < f_rem]
+                                        
+                                        if past_tab.empty:
+                                            errores.append(f"Contrato {cid}: No existen saldos históricos previos a {f_rem.date()}.")
+                                            continue
+                                            
+                                        old_pasivo_orig = past_tab.iloc[-1]['S_Fin_Orig']
+                                        old_amort_acum_orig = past_tab['Dep_Orig'].sum()
+                                        old_rou_net_orig = rou_old - old_amort_acum_orig
+                                        
+                                        tc_ini = float(c_sel['Valor_Moneda_Inicio']) if float(c_sel['Valor_Moneda_Inicio']) > 0 else 1.0
+                                        tc_f_rem = obtener_tc_cache(c_sel['Moneda'], f_rem)
+                                        if tc_f_rem == 0: tc_f_rem = 1.0
+                                        
+                                        diff = relativedelta(n_fin, f_rem)
+                                        n_p = diff.years * 12 + diff.months
+                                        if diff.days >= 15: n_p += 1
+                                        t_m = pow(1+n_tas_pct/100, 1/12)-1
+                                        
+                                        # Lógica de Reducción de Alcance Módulo Masivo
+                                        baja_pasivo_uf = 0.0
+                                        baja_rou_uf = 0.0
+                                        pl_efecto_clp = 0.0
+                                        
+                                        f_fin_old = pd.to_datetime(c_sel['Fin'])
+                                        if n_fin < f_fin_old:
+                                            diff_old = relativedelta(f_fin_old, f_rem)
+                                            n_p_old = diff_old.years * 12 + diff_old.months
+                                            if diff_old.days >= 15: n_p_old += 1
+                                            
+                                            if n_p_old > 0:
+                                                p_dec = max(0.0, (n_p_old - n_p) / n_p_old)
+                                                baja_pasivo_uf = old_pasivo_orig * p_dec
+                                                baja_rou_uf = old_rou_net_orig * p_dec
+                                                pl_efecto_clp = (baja_pasivo_uf * tc_f_rem) - (baja_rou_uf * tc_ini)
+                                                
+                                                old_pasivo_orig -= baja_pasivo_uf
+                                                old_rou_net_orig -= baja_rou_uf
+                                        
+                                        ajuste_rou_uf = old_rou_net_orig * (tc_ini / tc_f_rem) - old_pasivo_orig
+                                        
+                                        # Insertar
+                                        insertar_remedicion(cid, f_rem.strftime('%Y-%m-%d'), n_can, n_tas_pct/100, t_m, n_fin.strftime('%Y-%m-%d'), n_p, ajuste_rou_uf, baja_pasivo_uf, baja_rou_uf, pl_efecto_clp, st.session_state.get('user', 'Sistema/Usuario'))
+                                        # CRITICO: El Plazo se mantiene igual (c_sel['Plazo']) para no estropear la matematica original
+                                        actualizar_contrato_remedicion(cid, c_sel['Canon'], c_sel['Tasa'], c_sel['Tasa_Mensual'], n_fin.strftime('%Y-%m-%d'), c_sel['Plazo'], f_rem.strftime('%Y-%m-%d'))
+                                        exitos += 1
+                                    except Exception as ex_fila:
+                                        errores.append(f"Fila {idx+2} (Contrato {cid}): Error {ex_fila}")
                                 
-                                ajuste_rou_uf = old_rou_net_orig * (tc_ini / tc_f_rem) - old_pasivo_orig
+                                if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                                if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                                st.cache_data.clear()
                                 
-                                # Insertar
-                                insertar_remedicion(cid, f_rem.strftime('%Y-%m-%d'), n_can, n_tas_pct/100, t_m, n_fin.strftime('%Y-%m-%d'), n_p, ajuste_rou_uf, baja_pasivo_uf, baja_rou_uf, pl_efecto_clp, st.session_state.get('user', 'Sistema/Usuario'))
-                                # CRITICO: El Plazo se mantiene igual (c_sel['Plazo']) para no estropear la matematica original
-                                actualizar_contrato_remedicion(cid, c_sel['Canon'], c_sel['Tasa'], c_sel['Tasa_Mensual'], n_fin.strftime('%Y-%m-%d'), c_sel['Plazo'], f_rem.strftime('%Y-%m-%d'))
-                                exitos += 1
+                                if errores:
+                                    st.error("Se procesaron algunas modificaciones con advertencias:")
+                                    for e in errores: st.warning(e)
                                 
-                            if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                            if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
-                            st.cache_data.clear()
-                            
-                            if errores:
-                                st.error("Se procesaron algunas modificaciones con advertencias.")
-                                for e in errores: st.warning(e)
-                            
-                            if exitos > 0:
-                                st.session_state.success_msg = f"¡Remedición Masiva Completada! Se modificaron {exitos} contratos exitosamente."
-                                st.rerun()
+                                if exitos > 0:
+                                    st.session_state.success_msg = f"¡Remedición Masiva Completada! Se modificaron {exitos} contratos exitosamente."
+                                    st.rerun()
                                 
                     except Exception as e:
                         st.error(f"Error procesando el archivo: {e}")

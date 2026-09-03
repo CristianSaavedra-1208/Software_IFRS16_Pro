@@ -307,33 +307,34 @@ def cargar_contratos():
 
 def insertar_contrato(c, usuario_act="Sistema/Usuario"):
     conn = conectar()
-    
-    # Asegurar llaves numéricas por defecto
-    for campo in ['Costos_Directos', 'Pagos_Anticipados', 'Costos_Desmantelamiento', 'Incentivos', 'Ajuste_ROU']:
-        if campo not in c: c[campo] = 0.0
-        
-    # Obtener campos extra configurables para asegurar que existan en el dict
-    cursor = conn.cursor()
-    cursor.execute("SELECT valor FROM config_params WHERE tipo='CAMPO_EXTRA'")
-    campos_extra = [dict(row)['valor'] for row in cursor.fetchall()]
-    for ex in campos_extra:
-        if ex not in c:
-            c[ex] = None
+    try:
+        # Asegurar llaves numéricas por defecto
+        for campo in ['Costos_Directos', 'Pagos_Anticipados', 'Costos_Desmantelamiento', 'Incentivos', 'Ajuste_ROU']:
+            if campo not in c: c[campo] = 0.0
             
-    columnas = list(c.keys())
-    # Escapar nombres de columnas con comillas dobles para SQLite
-    cols_sql = ", ".join([f'"{col}"' for col in columnas])
-    vals_sql = ", ".join(["?"] * len(columnas))
-    
-    query = f"INSERT INTO contratos ({cols_sql}) VALUES ({vals_sql})"
-    valores = tuple(c[col] for col in columnas)
-    conn.execute(query, valores)
-    
-    conn.commit()
-    conn.close()
-    
-    # Audit Log
-    registrar_log(usuario_act, "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c['Inicio']}, Clase: {c['Clase_Activo']}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
+        # Obtener columnas reales existentes en la tabla contratos
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(contratos)")
+        cols_existentes = {row['name'] for row in cursor.fetchall()}
+        
+        # Filtrar solo columnas que realmente existen en la tabla contratos
+        c_filtrado = {k: v for k, v in c.items() if k in cols_existentes}
+        
+        columnas = list(c_filtrado.keys())
+        # Escapar nombres de columnas con comillas dobles para SQLite
+        cols_sql = ", ".join([f'"{col}"' for col in columnas])
+        vals_sql = ", ".join(["?"] * len(columnas))
+        
+        query = f"INSERT INTO contratos ({cols_sql}) VALUES ({vals_sql})"
+        valores = tuple(c_filtrado[col] for col in columnas)
+        conn.execute(query, valores)
+        
+        conn.commit()
+        
+        # Audit Log
+        registrar_log(usuario_act, "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c.get('Inicio')}, Clase: {c.get('Clase_Activo')}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
+    finally:
+        conn.close()
 
 def dar_baja_contrato(cod, fecha, usuario_act="Sistema/Usuario"):
     conn = conectar()
