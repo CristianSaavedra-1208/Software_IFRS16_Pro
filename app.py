@@ -4,6 +4,9 @@ from datetime import date
 import datetime
 from dateutil.relativedelta import relativedelta
 import io
+import importlib
+import db
+importlib.reload(db)
 from db import *
 from core import *
 st.set_page_config(page_title="Mundo 16", layout="wide")

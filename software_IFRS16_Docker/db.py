@@ -1,5 +1,6 @@
 import sqlite3
 import pandas as pd
+import streamlit as st
 
 DB_NAME = "ifrs16_platinum.db"
 
@@ -45,6 +46,29 @@ def inicializar_db():
                         accion TEXT,
                         entidad_id TEXT,
                         detalles TEXT)''')
+                        
+    cursor.execute('''CREATE TABLE IF NOT EXISTS periodos_contables (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        empresa TEXT DEFAULT 'Todas',
+                        anio INTEGER,
+                        mes INTEGER,
+                        fecha_cierre TEXT,
+                        estado TEXT DEFAULT 'Cerrado',
+                        cerrado_por TEXT,
+                        fecha_accion TEXT,
+                        motivo TEXT)''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS saldos_cierre_periodo (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        periodo_cierre TEXT,
+                        codigo_interno TEXT,
+                        empresa TEXT,
+                        pasivo_clp REAL,
+                        rou_bruto_clp REAL,
+                        amort_acum_clp REAL,
+                        saldo_pasivo_moneda REAL,
+                        moneda TEXT,
+                        tc_cierre REAL)''')
     
     # Migraciones para agregar componentes del ROU y Remedición
     nuevas_columnas = {
@@ -164,6 +188,7 @@ def obtener_usuarios():
     conn.close()
     return df.to_dict('records')
 
+@st.cache_data
 def obtener_parametros(tipo):
     conn = conectar()
     df = pd.read_sql(f"SELECT valor FROM config_params WHERE tipo='{tipo}'", conn)
@@ -207,6 +232,7 @@ def agregar_parametro(tipo, valor):
     conn.execute("INSERT OR IGNORE INTO config_params VALUES (?,?)", (tipo, valor))
     conn.commit()
     conn.close()
+    st.cache_data.clear()  # Invalida caché de obtener_parametros
 
 def eliminar_parametro(tipo, valor):
     conn = conectar()
@@ -232,6 +258,7 @@ def eliminar_parametro(tipo, valor):
     conn.execute("DELETE FROM config_params WHERE tipo=? AND valor=?", (tipo, valor))
     conn.commit()
     conn.close()
+    st.cache_data.clear()  # Invalida caché de obtener_parametros
     return True
 
 def invocar_columna_extra(nombre):
@@ -244,12 +271,31 @@ def invocar_columna_extra(nombre):
     conn.execute("INSERT OR IGNORE INTO config_params VALUES (?,?)", ('CAMPO_EXTRA', nombre))
     conn.commit()
     conn.close()
+    st.cache_data.clear()  # Invalida caché de obtener_parametros
 
 def cargar_monedas():
     conn = conectar()
     df = pd.read_sql("SELECT * FROM monedas ORDER BY fecha DESC", conn)
     conn.close()
     return df
+
+def obtener_tc_spot(moneda, fecha_str):
+    """Lookup optimizado de tipo de cambio via SQL directo.
+    Retorna el valor mas reciente de 'moneda' en o antes de 'fecha_str' (formato YYYY-MM-DD).
+    Logica identica a: df[(df['moneda']==moneda) & (df['fecha']<=fecha_str)].iloc[0]['valor']
+    pero sin cargar toda la tabla en memoria.
+    """
+    if moneda == "CLP":
+        return 1.0
+    conn = conectar()
+    c = conn.cursor()
+    c.execute(
+        "SELECT valor FROM monedas WHERE moneda = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1",
+        (moneda, fecha_str)
+    )
+    row = c.fetchone()
+    conn.close()
+    return float(row['valor']) if row else 0.0
 
 def insertar_moneda(f, m, v):
     conn = conectar()
@@ -284,33 +330,34 @@ def cargar_contratos():
 
 def insertar_contrato(c, usuario_act="Sistema/Usuario"):
     conn = conectar()
-    
-    # Asegurar llaves numéricas por defecto
-    for campo in ['Costos_Directos', 'Pagos_Anticipados', 'Costos_Desmantelamiento', 'Incentivos', 'Ajuste_ROU']:
-        if campo not in c: c[campo] = 0.0
-        
-    # Obtener campos extra configurables para asegurar que existan en el dict
-    cursor = conn.cursor()
-    cursor.execute("SELECT valor FROM config_params WHERE tipo='CAMPO_EXTRA'")
-    campos_extra = [dict(row)['valor'] for row in cursor.fetchall()]
-    for ex in campos_extra:
-        if ex not in c:
-            c[ex] = None
+    try:
+        # Asegurar llaves numéricas por defecto
+        for campo in ['Costos_Directos', 'Pagos_Anticipados', 'Costos_Desmantelamiento', 'Incentivos', 'Ajuste_ROU']:
+            if campo not in c: c[campo] = 0.0
             
-    columnas = list(c.keys())
-    # Escapar nombres de columnas con comillas dobles para SQLite
-    cols_sql = ", ".join([f'"{col}"' for col in columnas])
-    vals_sql = ", ".join(["?"] * len(columnas))
-    
-    query = f"INSERT INTO contratos ({cols_sql}) VALUES ({vals_sql})"
-    valores = tuple(c[col] for col in columnas)
-    conn.execute(query, valores)
-    
-    conn.commit()
-    conn.close()
-    
-    # Audit Log
-    registrar_log(usuario_act, "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c['Inicio']}, Clase: {c['Clase_Activo']}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
+        # Obtener columnas reales existentes en la tabla contratos
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(contratos)")
+        cols_existentes = {row['name'] for row in cursor.fetchall()}
+        
+        # Filtrar solo columnas que realmente existen en la tabla contratos
+        c_filtrado = {k: v for k, v in c.items() if k in cols_existentes}
+        
+        columnas = list(c_filtrado.keys())
+        # Escapar nombres de columnas con comillas dobles para SQLite
+        cols_sql = ", ".join([f'"{col}"' for col in columnas])
+        vals_sql = ", ".join(["?"] * len(columnas))
+        
+        query = f"INSERT INTO contratos ({cols_sql}) VALUES ({vals_sql})"
+        valores = tuple(c_filtrado[col] for col in columnas)
+        conn.execute(query, valores)
+        
+        conn.commit()
+        
+        # Audit Log
+        registrar_log(usuario_act, "CREAR_CONTRATO", c['Codigo_Interno'], f"Inicio: {c.get('Inicio')}, Clase: {c.get('Clase_Activo')}, Frecuencia: {c.get('Frecuencia_Pago', 'Mensual')}")
+    finally:
+        conn.close()
 
 def dar_baja_contrato(cod, fecha, usuario_act="Sistema/Usuario"):
     conn = conectar()
@@ -434,5 +481,106 @@ def obtener_logs():
         df = pd.DataFrame()
     conn.close()
     return df
+
+# --- GESTIÓN DE PERIODOS CONTABLES Y CANDADOS DE SEGURIDAD ---
+
+def obtener_periodos_contables(empresa=None):
+    conn = conectar()
+    try:
+        if empresa and empresa != "Todas":
+            df = pd.read_sql("SELECT * FROM periodos_contables WHERE empresa='Todas' OR empresa=? ORDER BY fecha_cierre DESC, id DESC", conn, params=(empresa,))
+        else:
+            df = pd.read_sql("SELECT * FROM periodos_contables ORDER BY fecha_cierre DESC, id DESC", conn)
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+def obtener_ultimo_periodo_cerrado(empresa="Todas"):
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        if empresa and empresa != "Todas":
+            cursor.execute("SELECT fecha_cierre FROM periodos_contables WHERE estado='Cerrado' AND (empresa='Todas' OR empresa=?) ORDER BY fecha_cierre DESC LIMIT 1", (empresa,))
+        else:
+            cursor.execute("SELECT fecha_cierre FROM periodos_contables WHERE estado='Cerrado' ORDER BY fecha_cierre DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        return row['fecha_cierre'] if row else None
+    except Exception:
+        conn.close()
+        return None
+
+def es_periodo_cerrado(fecha_evaluar, empresa="Todas"):
+    if not fecha_evaluar:
+        return False
+    try:
+        f_s = pd.to_datetime(fecha_evaluar).strftime('%Y-%m-%d')
+        f_limite = obtener_ultimo_periodo_cerrado(empresa)
+        if f_limite and f_s <= f_limite:
+            return True
+        return False
+    except Exception:
+        return False
+
+def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
+    from datetime import date, datetime
+    from dateutil.relativedelta import relativedelta
+    
+    try:
+        anio = int(anio)
+        mes = int(mes)
+        f_fin_mes = pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)
+        f_cierre_str = f_fin_mes.strftime('%Y-%m-%d')
+        fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn = conectar()
+        cursor = conn.cursor()
+        
+        # Verificar si ya existe registro cerrado para este mes/empresa
+        cursor.execute("SELECT id FROM periodos_contables WHERE anio=? AND mes=? AND empresa=? AND estado='Cerrado'", (anio, mes, empresa))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"El período {mes:02d}/{anio} para la empresa '{empresa}' ya se encuentra cerrado."
+            
+        cursor.execute(
+            "INSERT INTO periodos_contables (empresa, anio, mes, fecha_cierre, estado, cerrado_por, fecha_accion, motivo) VALUES (?, ?, ?, ?, 'Cerrado', ?, ?, ?)",
+            (empresa, anio, mes, f_cierre_str, usuario, fh_now, motivo)
+        )
+        conn.commit()
+        conn.close()
+        
+        registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Motivo: {motivo}")
+        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado exitosamente."
+    except Exception as e:
+        return False, f"Error al cerrar período: {str(e)}"
+
+def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
+    from datetime import datetime
+    try:
+        anio = int(anio)
+        mes = int(mes)
+        fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn = conectar()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM periodos_contables WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas') AND estado='Cerrado'", (anio, mes, empresa))
+        rows = cursor.fetchall()
+        if not rows:
+            conn.close()
+            return False, f"No se encontró un período cerrado para {mes:02d}/{anio} ({empresa})."
+            
+        cursor.execute(
+            "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas')",
+            (fh_now, usuario, f"Reapertura: {motivo}", anio, mes, empresa)
+        )
+        conn.commit()
+        conn.close()
+        
+        registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura empresa: {empresa}. Motivo: {motivo}")
+        return True, f"Período {mes:02d}/{anio} reabierto exitosamente."
+    except Exception as e:
+        return False, f"Error al reabrir período: {str(e)}"
 
 inicializar_db()
