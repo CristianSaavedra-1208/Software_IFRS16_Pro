@@ -531,7 +531,7 @@ def es_periodo_cerrado(fecha_evaluar, empresa="Todas"):
 def generar_snapshots_cierre(anio, mes, empresa="Todas"):
     from datetime import date
     from dateutil.relativedelta import relativedelta
-    from core import motor_financiero_v21, simular_libro_mayor, obtener_tc_cache
+    import core
     
     f_cierre_dt = pd.to_datetime(date(int(anio), int(mes), 1)) + relativedelta(day=31)
     f_cierre_str = f_cierre_dt.strftime('%Y-%m-%d')
@@ -551,21 +551,21 @@ def generar_snapshots_cierre(anio, mes, empresa="Todas"):
             
         rems = rems_grupos.get(cid, [])
         try:
-            tab, vp, rou = motor_financiero_v21(c, rems)
+            tab, vp, rou = core.motor_financiero_v21(c, rems)
         except Exception:
-            tab, vp, rou = motor_financiero_v21(c)
+            tab, vp, rou = core.motor_financiero_v21(c)
             
         tc_ini = float(c.get('Valor_Moneda_Inicio') or 1.0)
         if tc_ini <= 0: tc_ini = 1.0
         
         # Calcular saldo exacto al corte usando el cálculo base sin snapshot
-        rb, aa, pasivo = simular_libro_mayor(c, tab, f_cierre_dt, rems, tc_ini, vp, rou, usar_snapshot=False)
+        rb, aa, pasivo = core.simular_libro_mayor(c, tab, f_cierre_dt, rems, tc_ini, vp, rou, usar_snapshot=False)
         
         past_tab = tab[tab['Fecha'] <= f_cierre_dt]
         s_fin_orig = past_tab.iloc[-1]['S_Fin_Orig'] if not past_tab.empty else 0.0
         
         moneda = c.get('Moneda', 'CLP')
-        tc_cierre = obtener_tc_cache(moneda, f_cierre_dt)
+        tc_cierre = core.obtener_tc_cache(moneda, f_cierre_dt)
         
         snapshots.append((
             f_cierre_str, cid, c.get('Empresa', 'Todas'),
@@ -623,8 +623,12 @@ def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=
             pass
             
         # Invalidate LRU caches
-        from core import limpiar_caches_financieros
-        limpiar_caches_financieros()
+        try:
+            import core
+            if hasattr(core, 'limpiar_caches_financieros'):
+                core.limpiar_caches_financieros()
+        except Exception:
+            pass
         
         registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Snapshot generado. Motivo: {motivo}")
         return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado y saldos congelados exitosamente."
@@ -663,8 +667,12 @@ def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo
         conn.commit()
         conn.close()
         
-        from core import limpiar_caches_financieros
-        limpiar_caches_financieros()
+        try:
+            import core
+            if hasattr(core, 'limpiar_caches_financieros'):
+                core.limpiar_caches_financieros()
+        except Exception:
+            pass
         
         registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura empresa: {empresa}. Motivo: {motivo}")
         return True, f"Período {mes:02d}/{anio} reabierto exitosamente."

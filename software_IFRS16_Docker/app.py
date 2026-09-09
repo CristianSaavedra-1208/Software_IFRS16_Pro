@@ -5,6 +5,8 @@ import datetime
 from dateutil.relativedelta import relativedelta
 import io
 import importlib
+import core
+importlib.reload(core)
 import db
 importlib.reload(db)
 from db import *
