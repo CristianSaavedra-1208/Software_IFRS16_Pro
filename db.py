@@ -46,6 +46,29 @@ def inicializar_db():
                         accion TEXT,
                         entidad_id TEXT,
                         detalles TEXT)''')
+                        
+    cursor.execute('''CREATE TABLE IF NOT EXISTS periodos_contables (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        empresa TEXT DEFAULT 'Todas',
+                        anio INTEGER,
+                        mes INTEGER,
+                        fecha_cierre TEXT,
+                        estado TEXT DEFAULT 'Cerrado',
+                        cerrado_por TEXT,
+                        fecha_accion TEXT,
+                        motivo TEXT)''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS saldos_cierre_periodo (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        periodo_cierre TEXT,
+                        codigo_interno TEXT,
+                        empresa TEXT,
+                        pasivo_clp REAL,
+                        rou_bruto_clp REAL,
+                        amort_acum_clp REAL,
+                        saldo_pasivo_moneda REAL,
+                        moneda TEXT,
+                        tc_cierre REAL)''')
     
     # Migraciones para agregar componentes del ROU y Remedición
     nuevas_columnas = {
@@ -458,5 +481,106 @@ def obtener_logs():
         df = pd.DataFrame()
     conn.close()
     return df
+
+# --- GESTIÓN DE PERIODOS CONTABLES Y CANDADOS DE SEGURIDAD ---
+
+def obtener_periodos_contables(empresa=None):
+    conn = conectar()
+    try:
+        if empresa and empresa != "Todas":
+            df = pd.read_sql("SELECT * FROM periodos_contables WHERE empresa='Todas' OR empresa=? ORDER BY fecha_cierre DESC, id DESC", conn, params=(empresa,))
+        else:
+            df = pd.read_sql("SELECT * FROM periodos_contables ORDER BY fecha_cierre DESC, id DESC", conn)
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+def obtener_ultimo_periodo_cerrado(empresa="Todas"):
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        if empresa and empresa != "Todas":
+            cursor.execute("SELECT fecha_cierre FROM periodos_contables WHERE estado='Cerrado' AND (empresa='Todas' OR empresa=?) ORDER BY fecha_cierre DESC LIMIT 1", (empresa,))
+        else:
+            cursor.execute("SELECT fecha_cierre FROM periodos_contables WHERE estado='Cerrado' ORDER BY fecha_cierre DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        return row['fecha_cierre'] if row else None
+    except Exception:
+        conn.close()
+        return None
+
+def es_periodo_cerrado(fecha_evaluar, empresa="Todas"):
+    if not fecha_evaluar:
+        return False
+    try:
+        f_s = pd.to_datetime(fecha_evaluar).strftime('%Y-%m-%d')
+        f_limite = obtener_ultimo_periodo_cerrado(empresa)
+        if f_limite and f_s <= f_limite:
+            return True
+        return False
+    except Exception:
+        return False
+
+def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
+    from datetime import date, datetime
+    from dateutil.relativedelta import relativedelta
+    
+    try:
+        anio = int(anio)
+        mes = int(mes)
+        f_fin_mes = pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)
+        f_cierre_str = f_fin_mes.strftime('%Y-%m-%d')
+        fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn = conectar()
+        cursor = conn.cursor()
+        
+        # Verificar si ya existe registro cerrado para este mes/empresa
+        cursor.execute("SELECT id FROM periodos_contables WHERE anio=? AND mes=? AND empresa=? AND estado='Cerrado'", (anio, mes, empresa))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"El período {mes:02d}/{anio} para la empresa '{empresa}' ya se encuentra cerrado."
+            
+        cursor.execute(
+            "INSERT INTO periodos_contables (empresa, anio, mes, fecha_cierre, estado, cerrado_por, fecha_accion, motivo) VALUES (?, ?, ?, ?, 'Cerrado', ?, ?, ?)",
+            (empresa, anio, mes, f_cierre_str, usuario, fh_now, motivo)
+        )
+        conn.commit()
+        conn.close()
+        
+        registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Motivo: {motivo}")
+        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado exitosamente."
+    except Exception as e:
+        return False, f"Error al cerrar período: {str(e)}"
+
+def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
+    from datetime import datetime
+    try:
+        anio = int(anio)
+        mes = int(mes)
+        fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn = conectar()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM periodos_contables WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas') AND estado='Cerrado'", (anio, mes, empresa))
+        rows = cursor.fetchall()
+        if not rows:
+            conn.close()
+            return False, f"No se encontró un período cerrado para {mes:02d}/{anio} ({empresa})."
+            
+        cursor.execute(
+            "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas')",
+            (fh_now, usuario, f"Reapertura: {motivo}", anio, mes, empresa)
+        )
+        conn.commit()
+        conn.close()
+        
+        registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura empresa: {empresa}. Motivo: {motivo}")
+        return True, f"Período {mes:02d}/{anio} reabierto exitosamente."
+    except Exception as e:
+        return False, f"Error al reabrir período: {str(e)}"
 
 inicializar_db()

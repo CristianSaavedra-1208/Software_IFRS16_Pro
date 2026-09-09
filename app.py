@@ -1373,6 +1373,7 @@ def modulo_contratos():
             
             if st.form_submit_button("Registrar"):
                 # 1. Validaciones preventivas para evitar caídas o cierres de sesión
+                from db import es_periodo_cerrado
                 if not nom or not str(nom).strip():
                     st.error("❌ El 'Nombre Contrato' es obligatorio.")
                 elif can is None or can <= 0:
@@ -1381,6 +1382,8 @@ def modulo_contratos():
                     st.error("❌ La fecha de 'Fin' debe ser estrictamente posterior a la fecha de 'Inicio'.")
                 elif tas < 0:
                     st.error("❌ La 'Tasa Anual %' no puede ser negativa.")
+                elif es_periodo_cerrado(f_i, emp):
+                    st.error(f"❌ **Bloqueo de Período Cerrado**: La fecha de Inicio ({f_i.strftime('%d-%m-%Y')}) pertenece a un período contable cerrado para la empresa '{emp}'. Solicite al Administrador la reapertura en el módulo de Configuración.")
                 else:
                     try:
                         diff = relativedelta(f_f, f_i)
@@ -1487,6 +1490,9 @@ def modulo_contratos():
                                 errores.append(f"Fila {f_xl}: Año de Inicio no puede ser menor a 2000.")
                             if f_i > f_f:
                                 errores.append(f"Fila {f_xl}: La fecha de Inicio es mayor a la fecha de Fin.")
+                            from db import es_periodo_cerrado
+                            if es_periodo_cerrado(f_i, str(r.get('Empresa', 'Todas')).strip()):
+                                errores.append(f"Fila {f_xl}: La fecha de Inicio ({f_i.strftime('%d-%m-%Y')}) pertenece a un período contable cerrado para la empresa '{r.get('Empresa')}'.")
                         except Exception:
                             errores.append(f"Fila {f_xl}: Formato de fecha inválido en 'Inicio' o 'Fin'.")
                             
@@ -1609,8 +1615,11 @@ def modulo_contratos():
                 if st.form_submit_button("Aplicar Modificación"):
                     f_i = pd.to_datetime(c_sel['Inicio'])
                     f_rem_dt = pd.to_datetime(f_rem)
+                    from db import es_periodo_cerrado
                     
-                    if f_rem_dt <= f_i:
+                    if es_periodo_cerrado(f_rem_dt, c_sel.get('Empresa', 'Todas')):
+                        st.error(f"❌ **Bloqueo de Período Cerrado**: La fecha de modificación ({f_rem_dt.strftime('%d-%m-%Y')}) pertenece a un período contable cerrado para la empresa '{c_sel.get('Empresa')}'. Solicite al Administrador la reapertura en Configuración.")
+                    elif f_rem_dt <= f_i:
                         st.error("❌ La fecha de modificación debe ser estrictamente posterior a la fecha de inicio original.")
                     else:
                         try:
@@ -1680,11 +1689,15 @@ def modulo_contratos():
             c_baja = mapa_c[sel_b]
             f_baja = st.date_input("Fecha Efectiva de Baja", value=pd.to_datetime(c_baja['Fin']), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
             if st.button("Procesar Baja Definitiva"):
-                dar_baja_contrato(c_baja['Codigo_Interno'], f_baja.strftime('%Y-%m-%d'), st.session_state.get('user', 'Sistema/Usuario'))
-                if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
-                if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
-                st.session_state.success_msg = f"Contrato dado de baja exitosamente en la fecha {f_baja}"
-                st.rerun()
+                from db import es_periodo_cerrado
+                if es_periodo_cerrado(f_baja, c_baja.get('Empresa', 'Todas')):
+                    st.error(f"❌ **Bloqueo de Período Cerrado**: La fecha de baja ({pd.to_datetime(f_baja).strftime('%d-%m-%Y')}) pertenece a un período contable cerrado para '{c_baja.get('Empresa')}'. Solicite la reapertura al Administrador.")
+                else:
+                    dar_baja_contrato(c_baja['Codigo_Interno'], f_baja.strftime('%Y-%m-%d'), st.session_state.get('user', 'Sistema/Usuario'))
+                    if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                    st.session_state.success_msg = f"Contrato dado de baja exitosamente en la fecha {f_baja}"
+                    st.rerun()
 
     with t7:
         st.subheader("Baja Masiva de Contratos por Excel")
@@ -1732,6 +1745,10 @@ def modulo_contratos():
                         f_i = pd.to_datetime(c_sel['Inicio'])
                         f_f = pd.to_datetime(c_sel['Fin'])
                         
+                        from db import es_periodo_cerrado
+                        if es_periodo_cerrado(f_baja_val, c_sel.get('Empresa', 'Todas')):
+                            errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": f"Fecha de baja ({f_baja_val.strftime('%d-%m-%Y')}) pertenece a un período contable cerrado."})
+                            continue
                         if f_baja_val < f_i:
                             errores_baja.append({"Contrato": cid, "Estado": "❌ ERROR", "Motivo": "Fecha de baja anterior al inicio."})
                             continue
@@ -1826,6 +1843,10 @@ def modulo_contratos():
                                         f_rem = pd.to_datetime(r[col_f_rem])
                                         f_i = pd.to_datetime(c_sel['Inicio'])
                                         
+                                        from db import es_periodo_cerrado
+                                        if es_periodo_cerrado(f_rem, c_sel.get('Empresa', 'Todas')):
+                                            errores.append(f"Contrato {cid}: La fecha efectiva ({f_rem.strftime('%d-%m-%Y')}) pertenece a un período contable cerrado para '{c_sel.get('Empresa')}'.")
+                                            continue
                                         if f_rem <= f_i:
                                             errores.append(f"Contrato {cid}: La fecha efectiva ({f_rem.date()}) no puede ser anterior al inicio ({f_i.date()}).")
                                             continue
@@ -2206,6 +2227,8 @@ def modulo_configuracion():
         
     if rol_actual == 'Auditor Ext. / Gerencia (Lector)':
         opciones = ["Log de Usuario"]
+    elif rol_actual == 'Administrador':
+        opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "🔒 Cierre de Períodos", "Mantenimiento BD"]
     else:
         opciones = ["Usuarios", "Empresas", "Monedas", "Campos Extra y Frecuencias", "Clases de Activo", "Cuentas Contables", "Integraciones ERP", "Log de Usuario", "Mantenimiento BD"]
         
@@ -2512,6 +2535,96 @@ def modulo_configuracion():
             if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
             if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
             st.success("✅ Base de datos de contratos vaciada. El sistema está listo para una carga masiva desde el módulo de Contratos.")
+
+    elif sel_tab == "🔒 Cierre de Períodos":
+        st.subheader("🔒 Gestión de Cierre de Períodos Contables (Candado de Seguridad)")
+        st.info("ℹ️ **Función del Candado de Períodos:** Al cerrar un período contable, el sistema bloquea cualquier modificación, creación retroactiva, baja o remedición con fecha igual o anterior al cierre. Esto garantiza la inmutabilidad de los saldos financieros y auditados.")
+        
+        from db import (
+            obtener_periodos_contables, obtener_ultimo_periodo_cerrado,
+            cerrar_periodo_contable, reabrir_periodo_contable
+        )
+        
+        # 1. Estado Actual
+        ultimo_cierre = obtener_ultimo_periodo_cerrado("Todas")
+        st.markdown("### 📌 Estado Actual")
+        if ultimo_cierre:
+            st.success(f"🔒 **Último Período Cerrado (Global):** Hasta el **{pd.to_datetime(ultimo_cierre).strftime('%d-%m-%Y')}**")
+        else:
+            st.warning("🟢 **No existen períodos cerrados actualmente.** Todos los meses históricos están abiertos para edición.")
+            
+        st.markdown("---")
+        
+        t_cierre, t_reapertura, t_hist = st.tabs(["🔒 Ejecutar Cierre de Período", "🔓 Reabrir Período Contable", "📜 Historial de Cierres"])
+        
+        with t_cierre:
+            st.write("#### Cerrar un Período Mensual")
+            st.write("Al cerrar el período seleccionado, ningún usuario podrá ingresar contratos ni alterar datos con fechas anteriores o iguales a este fin de mes.")
+            
+            c_c1, c_c2, c_c3 = st.columns(3)
+            emp_cierre = c_c1.selectbox("Empresa / Sociedad", ["Todas"] + EMPRESAS_LISTA, key="cierre_emp")
+            mes_cierre_nom = c_c2.selectbox("Mes a Cerrar", MESES_LISTA, key="cierre_m")
+            anio_cierre = c_c3.number_input("Año a Cerrar", value=date.today().year, min_value=2015, max_value=2050, key="cierre_a")
+            
+            motivo_cierre = st.text_input("Motivo / Justificación del Cierre", value="Cierre contable y auditoría mensual", key="cierre_mot")
+            
+            if st.button("🔒 Confirmar y Cerrar Período", type="primary", key="btn_ejecutar_cierre"):
+                mes_cierre_idx = MESES_LISTA.index(mes_cierre_nom) + 1
+                user_act = st.session_state.get('user', 'admin')
+                ok, msg = cerrar_periodo_contable(anio_cierre, mes_cierre_idx, emp_cierre, user_act, motivo_cierre)
+                if ok:
+                    st.session_state.success_msg = f"✅ {msg}"
+                    st.cache_data.clear()
+                    if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                    if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                    st.rerun()
+                else:
+                    st.error(f"❌ {msg}")
+                    
+        with t_reapertura:
+            st.write("#### Reabrir un Período Previamente Cerrado")
+            st.warning("⚠️ **ATENCIÓN**: Reabrir un período permitirá a los analistas realizar modificaciones retroactivas. Esta acción quedará registrada con su usuario en la bitácora de auditoría.")
+            
+            c_r1, c_r2, c_r3 = st.columns(3)
+            emp_reap = c_r1.selectbox("Empresa / Sociedad", ["Todas"] + EMPRESAS_LISTA, key="reap_emp")
+            mes_reap_nom = c_r2.selectbox("Mes a Reabrir", MESES_LISTA, key="reap_m")
+            anio_reap = c_r3.number_input("Año a Reabrir", value=date.today().year, min_value=2015, max_value=2050, key="reap_a")
+            
+            motivo_reap = st.text_input("Motivo Obligatorio de Reapertura (para Auditoría)", key="reap_mot")
+            pass_admin = st.text_input("Confirme su Contraseña de Administrador", type="password", key="reap_pass")
+            
+            if st.button("🔓 Confirmar Reapertura", type="secondary", key="btn_ejecutar_reapertura"):
+                user_act = st.session_state.get('user', 'admin')
+                from db import verificar_credenciales
+                if not pass_admin or not verificar_credenciales(user_act, pass_admin):
+                    st.error("❌ Contraseña de Administrador incorrecta.")
+                elif not motivo_reap or len(motivo_reap.strip()) < 5:
+                    st.error("❌ Debe ingresar una justificación detallada de al menos 5 caracteres para la bitácora de auditoría.")
+                else:
+                    mes_reap_idx = MESES_LISTA.index(mes_reap_nom) + 1
+                    ok, msg = reabrir_periodo_contable(anio_reap, mes_reap_idx, emp_reap, user_act, motivo_reap)
+                    if ok:
+                        st.session_state.success_msg = f"✅ {msg}"
+                        st.cache_data.clear()
+                        if 'motor_cache' in st.session_state: st.session_state.motor_cache.clear()
+                        if 'slm_cache' in st.session_state: st.session_state.slm_cache.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+                        
+        with t_hist:
+            st.write("#### Trazabilidad de Períodos Contables")
+            df_periodos = obtener_periodos_contables()
+            if not df_periodos.empty:
+                df_periodos.rename(columns={
+                    'id': 'ID', 'empresa': 'Sociedad', 'anio': 'Año', 'mes': 'Mes',
+                    'fecha_cierre': 'Fecha Límite Cierre', 'estado': 'Estado',
+                    'cerrado_por': 'Usuario Responsable', 'fecha_accion': 'Fecha/Hora Registro',
+                    'motivo': 'Motivo / Detalle'
+                }, inplace=True)
+                st.dataframe(df_periodos, use_container_width=True)
+            else:
+                st.info("No hay registros de cierre de períodos históricos.")
 
 def resolver_tasa_implicita(vr, ca, canon, plazo_meses, vrng, oc):
     total_inversion = vr + ca
