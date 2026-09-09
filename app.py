@@ -1468,11 +1468,16 @@ def modulo_contratos():
                         if any(f"Fila {f_xl}:" in e for e in errores): continue
                         
                         # Revisar Numéricos
-                        try:
-                            float(r['Canon'])
-                            float(r['Tasa Anual %'])
-                        except ValueError:
-                            errores.append(f"Fila {f_xl}: 'Canon' o 'Tasa Anual %' no son un número válido.")
+                        for col_num in ['Canon', 'Tasa Anual %', 'Costos_Directos', 'Pagos_Anticipados', 'Costos_Desmantelamiento', 'Incentivos']:
+                            if col_num in r and pd.notna(r[col_num]) and str(r[col_num]).strip() != "":
+                                val_num = r[col_num]
+                                if isinstance(val_num, (pd.Timestamp, pd.DatetimeIndex)) or hasattr(val_num, 'date'):
+                                    errores.append(f"Fila {f_xl}: La columna '{col_num}' contiene una fecha ({val_num}) en lugar de un valor numérico.")
+                                else:
+                                    try:
+                                        float(val_num)
+                                    except (ValueError, TypeError):
+                                        errores.append(f"Fila {f_xl}: La columna '{col_num}' con valor '{val_num}' no es un número válido.")
                             
                         # Revisar Fechas lógicas
                         try:
@@ -1491,6 +1496,14 @@ def modulo_contratos():
                             st.warning(e)
                     else:
                         # 2. Inserción Segura
+                        def _clean_flt(val, default=0.0):
+                            if pd.isna(val) or isinstance(val, (pd.Timestamp, pd.DatetimeIndex)) or hasattr(val, 'date'):
+                                return default
+                            try:
+                                return float(val)
+                            except (ValueError, TypeError):
+                                return default
+
                         import time
                         t_ini_carga = time.time()
                         for _, r in df_in.iterrows():
@@ -1500,23 +1513,23 @@ def modulo_contratos():
                             diff = relativedelta(f_f, f_i)
                             p = diff.years * 12 + diff.months
                             if diff.days >= 15: p += 1
-                            t_an = float(r['Tasa Anual %'])
+                            t_an = _clean_flt(r['Tasa Anual %'], 0.0)
                             mon = str(r['Moneda'])
                             
                             nuevo_masivo = {
                                 "Codigo_Interno": generar_codigo_correlativo(emp, contratos_existentes), 
                                 "Empresa": emp, "Clase_Activo": str(r['Clase_Activo']), "ID": str(r.get('ID', '')), 
                                 "Proveedor": str(r.get('Proveedor', '')), "Cod1": "", "Cod2": "", "Nombre": str(r['Nombre']), 
-                                "Moneda": mon, "Canon": float(r['Canon']), "Tasa": t_an/100, 
-                                "Tasa_Mensual": pow(1+t_an/100, 1/12)-1, 
+                                "Moneda": mon, "Canon": _clean_flt(r['Canon'], 0.0), "Tasa": t_an/100, 
+                                "Tasa_Mensual": pow(1+t_an/100, 1/12)-1 if t_an > 0 else 0.0, 
                                 "Valor_Moneda_Inicio": obtener_tc_cache(mon, f_i), "Plazo": p, 
                                 "Inicio": f_i.strftime('%Y-%m-%d'), "Fin": f_f.strftime('%Y-%m-%d'), 
                                 "Estado": "Activo", 
                                 "Tipo_Pago": str(r.get('Tipo_Pago', 'Vencido')).strip().capitalize(), 
-                                "Costos_Directos": float(r.get('Costos_Directos', 0.0) if pd.notna(r.get('Costos_Directos')) else 0.0), 
-                                "Pagos_Anticipados": float(r.get('Pagos_Anticipados', 0.0) if pd.notna(r.get('Pagos_Anticipados')) else 0.0), 
-                                "Costos_Desmantelamiento": float(r.get('Costos_Desmantelamiento', 0.0) if pd.notna(r.get('Costos_Desmantelamiento')) else 0.0), 
-                                "Incentivos": float(r.get('Incentivos', 0.0) if pd.notna(r.get('Incentivos')) else 0.0),
+                                "Costos_Directos": _clean_flt(r.get('Costos_Directos', 0.0)), 
+                                "Pagos_Anticipados": _clean_flt(r.get('Pagos_Anticipados', 0.0)), 
+                                "Costos_Desmantelamiento": _clean_flt(r.get('Costos_Desmantelamiento', 0.0)), 
+                                "Incentivos": _clean_flt(r.get('Incentivos', 0.0)),
                                 "Frecuencia_Pago": str(r['Frecuencia_Pago']).strip()
                             }
                             # Asegurar carga de campos custom si vienen en el excel
