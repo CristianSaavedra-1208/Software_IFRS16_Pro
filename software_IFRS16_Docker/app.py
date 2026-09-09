@@ -995,16 +995,27 @@ def modulo_dashboard():
         if 'recon_excel_data' in st.session_state:
             del st.session_state['recon_excel_data']
         f_t = pd.to_datetime(date(a, MESES_LISTA.index(m)+1, 1)) + relativedelta(day=31)
-        df_c = pd.DataFrame(cargar_contratos())
+        lista_c = cargar_contratos()
         from db import cargar_remediciones_todas_agrupadas
         rems_grupos = cargar_remediciones_todas_agrupadas()
         
-        if df_c.empty:
+        if not lista_c:
             st.session_state.dash_data = None
             st.warning("No hay contratos registrados.")
         else:
             res = []
-            for _, c in df_c.iterrows():
+            m_idx_val = MESES_LISTA.index(m) + 1
+            fechas_anio = [pd.to_datetime(date(a, mes_i, 1)) + relativedelta(day=31) for mes_i in range(1, m_idx_val + 1)]
+            tc_map_anio = {
+                'UF': {f: obtener_tc_cache('UF', f) for f in fechas_anio},
+                'USD': {f: obtener_tc_cache('USD', f) for f in fechas_anio},
+                'UTM': {f: obtener_tc_cache('UTM', f) for f in fechas_anio},
+                'CLP': {f: 1.0 for f in fechas_anio}
+            }
+            columnas_base = ['Codigo_Interno', 'Empresa', 'Clase_Activo', 'ID', 'Proveedor', 'Nombre', 'Moneda', 'Canon', 'Tasa', 'Tasa_Mensual', 'Valor_Moneda_Inicio', 'Plazo', 'Inicio', 'Fin', 'Estado', 'Fecha_Baja', 'Ajuste_ROU', 'Tipo_Pago', 'Fecha_Remedicion', 'Frecuencia_Pago']
+            permitidas = columnas_base + obtener_parametros('CAMPO_EXTRA')
+            
+            for c in lista_c:
                 if emp_sel != "Todas" and c['Empresa'] != emp_sel: continue
                 if f_t < pd.to_datetime(c['Inicio']).replace(day=1): continue
                 
@@ -1029,30 +1040,30 @@ def modulo_dashboard():
                     elif f_baja_efectiva.year == a and f_baja_efectiva.month <= f_t.month:
                         es_baja_ejercicio = True # Incluir en Detalle con balances a 0 para preservar P&L
                 
-                tab, vp, rou = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
+                rems = rems_grupos.get(c['Codigo_Interno'], [])
+                tab, vp, rou = obtener_motor_financiero(c, rems=rems)
                 if tab.empty or 'Fecha' not in tab.columns: continue
-                past = tab[tab['Fecha'] <= f_t]
+                
+                mask_past = tab['Fecha'] <= f_t
+                past = tab[mask_past]
                 if not past.empty:
                     tc = obtener_tc_cache(c['Moneda'], f_t); ratio_pasivo = tc
-                    v_act = past.iloc[-1]['S_Fin_Orig']
+                    v_act = past['S_Fin_Orig'].iloc[-1]
                     
-                    futuros = tab[tab['Fecha'] > f_t].copy()
-                    v_cor_sum = 0
-                    v_noc_sum_raw = 0
+                    futuros = tab[~mask_past]
+                    v_cor_sum = 0.0
+                    v_noc_sum_raw = 0.0
                     if not futuros.empty:
                         limite_12_dash = f_t + relativedelta(months=12)
+                        caps = (futuros['S_Ini_Orig'] - futuros['S_Fin_Orig']).to_numpy(copy=True)
+                        caps[-1] += futuros['S_Fin_Orig'].iloc[-1]
+                        fechas_fut = futuros['Fecha'].values
                         
-                        # Capital puro del periodo = S_Ini_Orig - S_Fin_Orig
-                        futuros['Capital'] = futuros['S_Ini_Orig'] - futuros['S_Fin_Orig']
+                        dias_al_pago = (fechas_fut - np.datetime64(f_t)).astype('timedelta64[D]').astype(int)
+                        es_corriente_mask = (dias_al_pago <= 90) | (fechas_fut <= np.datetime64(limite_12_dash))
                         
-                        # La ultima fila debe agregar todo el S_Fin_Orig remanente a su capital (ajuste del motor original)
-                        futuros.iloc[-1, futuros.columns.get_loc('Capital')] += futuros.iloc[-1]['S_Fin_Orig']
-                        
-                        dias_al_pago = (futuros['Fecha'] - f_t).dt.days
-                        es_corriente_mask = (dias_al_pago <= 90) | (futuros['Fecha'] <= limite_12_dash)
-                        
-                        v_cor_sum = futuros.loc[es_corriente_mask, 'Capital'].sum()
-                        v_noc_sum_raw = futuros.loc[~es_corriente_mask, 'Capital'].sum()
+                        v_cor_sum = caps[es_corriente_mask].sum()
+                        v_noc_sum_raw = caps[~es_corriente_mask].sum()
                                 
                     # El Pasivo Total debe ser exactamente el balance de cierre actual (v_act)
                     # El Pasivo Corriente son las amortizaciones estrictas de los proximos 12 meses
@@ -1060,8 +1071,6 @@ def modulo_dashboard():
                     v12 = v_act - v_cor_sum 
                     
                     tc_ini = float(c['Valor_Moneda_Inicio']) if float(c['Valor_Moneda_Inicio']) > 0 else 1.0
-                    # Using the preloaded rems_grupos cache to prevent N+1 queries
-                    rems = rems_grupos.get(c['Codigo_Interno'], [])
                     
                     n_can, n_tas, n_plaz, n_fin, n_rou = None, None, None, None, None
                     if rems:
@@ -1081,17 +1090,24 @@ def modulo_dashboard():
                     if tc_ini_hist <= 0: tc_ini_hist = 1.0
                     rou_bruto, amort_clp, pasivo_total_clp = obtener_simulacion_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
 
+                    # Vectorización ultra-rápida de depreciación ejercicio
                     past_ejercicio = past[past['Fecha'].dt.year == a]
                     dep_ejercicio_clp = 0.0
-                    for idx, row_dep in past_ejercicio.iterrows():
-                        f_mes_dep = pd.to_datetime(date(row_dep['Fecha'].year, row_dep['Fecha'].month, 1)) + relativedelta(day=31)
-                        if f_baja_efectiva:
-                            if f_mes_dep.year > f_baja_efectiva.year or (f_mes_dep.year == f_baja_efectiva.year and f_mes_dep.month > f_baja_efectiva.month):
-                                continue
-                        tc_mes_dep = obtener_tc_cache(c['Moneda'], f_mes_dep)
-                        if tc_mes_dep == 0: tc_mes_dep = 1.0
-                        tc_amo_rou = tc_mes_dep if (c['Moneda'] in ['UF', 'CLP'] or (c['Moneda'] == 'UTM' and a >= 2026)) else tc_ini_hist
-                        dep_ejercicio_clp += row_dep['Dep_Orig'] * tc_amo_rou
+                    if not past_ejercicio.empty:
+                        dep_origs = past_ejercicio['Dep_Orig'].values
+                        fechas_dep = past_ejercicio['Fecha'].values
+                        moneda_c = c['Moneda']
+                        tc_submap = tc_map_anio.get(moneda_c, {})
+                        
+                        for d_val, f_val in zip(dep_origs, fechas_dep):
+                            f_dt = pd.to_datetime(f_val)
+                            f_mes_dep = pd.to_datetime(date(f_dt.year, f_dt.month, 1)) + relativedelta(day=31)
+                            if f_baja_efectiva:
+                                if f_mes_dep.year > f_baja_efectiva.year or (f_mes_dep.year == f_baja_efectiva.year and f_mes_dep.month > f_baja_efectiva.month):
+                                    continue
+                            tc_mes_dep = tc_submap.get(f_mes_dep) or obtener_tc_cache(moneda_c, f_mes_dep) or 1.0
+                            tc_amo_rou = tc_mes_dep if (moneda_c in ['UF', 'CLP'] or (moneda_c == 'UTM' and a >= 2026)) else tc_ini_hist
+                            dep_ejercicio_clp += d_val * tc_amo_rou
                     
                     f_fin_date = pd.to_datetime(c['Fin']).date()
                     f_t_date = f_t.date()
@@ -1124,10 +1140,6 @@ def modulo_dashboard():
                         estado_real = 'Activo'
                         
                     item_dict["Estado Vigencia al Corte"] = estado_vig
-                    
-                    # 2. Copia exacta de columnas oficiales y extras activos (evitar campos zombie borrados)
-                    columnas_base = ['Codigo_Interno', 'Empresa', 'Clase_Activo', 'ID', 'Proveedor', 'Nombre', 'Moneda', 'Canon', 'Tasa', 'Tasa_Mensual', 'Valor_Moneda_Inicio', 'Plazo', 'Inicio', 'Fin', 'Estado', 'Fecha_Baja', 'Ajuste_ROU', 'Tipo_Pago', 'Fecha_Remedicion', 'Frecuencia_Pago']
-                    permitidas = columnas_base + obtener_parametros('CAMPO_EXTRA')
                     
                     for k, v in c.items():
                         if k in permitidas:
