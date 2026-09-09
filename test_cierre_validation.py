@@ -206,7 +206,7 @@ def verificar_baseline():
 def test_candados():
     from db import (
         inicializar_db, cerrar_periodo_contable, reabrir_periodo_contable,
-        es_periodo_cerrado, obtener_ultimo_periodo_cerrado
+        es_periodo_cerrado, obtener_ultimo_periodo_cerrado, conectar
     )
     print("=" * 70, flush=True)
     print("  TEST UNITARIO DE FUNCIONES DE CANDADO Y CIERRE", flush=True)
@@ -214,12 +214,19 @@ def test_candados():
     
     inicializar_db()
     
+    # 0. Limpiar registros de prueba para test aislado
+    conn = conectar()
+    conn.execute("DELETE FROM periodos_contables WHERE motivo LIKE '%test%' OR motivo LIKE '%auditor%'")
+    conn.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre >= '2026-01-01'")
+    conn.commit()
+    conn.close()
+    
     # 1. Probar cierre de periodo Mayo 2026
     ok, msg = cerrar_periodo_contable(2026, 5, "Todas", "admin", "Cierre mensual auditoria test")
     print(f" -> Cierre Mayo 2026: {ok} ({msg})", flush=True)
     assert ok, f"Fallo al cerrar periodo: {msg}"
     
-    # 2. Verificar que fechas <= 2026-05-31 estén cerradas
+    # 2. Verificar que fechas <= 2026-05-31 estén cerradas y posteriores abiertas
     assert es_periodo_cerrado("2026-05-15", "Todas") == True, "Error: 2026-05-15 debiera estar cerrada"
     assert es_periodo_cerrado("2026-01-01", "Todas") == True, "Error: 2026-01-01 debiera estar cerrada"
     assert es_periodo_cerrado("2026-06-01", "Todas") == False, "Error: 2026-06-01 debiera estar abierta"
@@ -230,8 +237,82 @@ def test_candados():
     print(f" -> Reapertura Mayo 2026: {ok_reabrir} ({msg_reabrir})", flush=True)
     assert ok_reabrir, f"Fallo al reabrir periodo: {msg_reabrir}"
     
+    # Limpiar
+    conn = conectar()
+    conn.execute("DELETE FROM periodos_contables WHERE motivo LIKE '%test%'")
+    conn.commit()
+    conn.close()
+    
     print("\n [OK] Todos los tests de candado pasaron con éxito.", flush=True)
     return True
+
+def test_benchmark_snapshots():
+    import time
+    from db import (
+        inicializar_db, cerrar_periodo_contable, reabrir_periodo_contable
+    )
+    from core import limpiar_caches_financieros
+    
+    print("=" * 70, flush=True)
+    print("  BENCHMARK & INTEGRIDAD CON SNAPSHOTS DE CIERRE", flush=True)
+    print("=" * 70, flush=True)
+    
+    inicializar_db()
+    
+    # 1. Medir tiempo sin snapshot para Agosto 2026 (1784 contratos)
+    print("\n[1/4] Calculando Agosto 2026 SIN snapshots (desde 2019/origen)...", flush=True)
+    t0 = time.time()
+    res_sin_snap = calcular_foto_periodos_todos()
+    t_sin = time.time() - t0
+    print(f" -> Tiempo total sin snapshots: {t_sin:.2f} s", flush=True)
+    
+    # 2. Cerrar Julio 2026 (generará snapshot al 2026-07-31)
+    print("\n[2/4] Cerrando período 2026-07 para generar snapshots...", flush=True)
+    ok_c, msg_c = cerrar_periodo_contable(2026, 7, "Todas", "admin", "Benchmark test snapshot")
+    print(f" -> Cierre 2026-07: {ok_c} ({msg_c})", flush=True)
+    limpiar_caches_financieros()
+    
+    # 3. Medir tiempo CON snapshot para Agosto 2026
+    print("\n[3/4] Calculando periodos CON snapshot activo al 2026-07...", flush=True)
+    t0 = time.time()
+    res_con_snap = calcular_foto_periodos_todos()
+    t_con = time.time() - t0
+    print(f" -> Tiempo total con snapshots: {t_con:.2f} s", flush=True)
+    
+    # 4. Validar que los números de Agosto 2026 sean 100% IDÉNTICOS
+    print("\n[4/4] Verificando tolerancia cero en saldos entre ambas ejecuciones...", flush=True)
+    tag = "2026-08"
+    tot_sin = res_sin_snap[tag]["totales"]
+    tot_con = res_con_snap[tag]["totales"]
+    
+    difs = []
+    for k in tot_sin:
+        diff = abs(tot_sin[k] - tot_con[k])
+        if diff > TOLERANCIA_CLP:
+            difs.append(f"Total {k}: SinSnap={tot_sin[k]}, ConSnap={tot_con[k]}, Dif={diff}")
+            
+    for cid in res_sin_snap[tag]["contratos"]:
+        vs = res_sin_snap[tag]["contratos"][cid]
+        vc = res_con_snap[tag]["contratos"][cid]
+        for campo in ["pasivo", "rou_bruto", "amort_acum"]:
+            diff = abs(vs[campo] - vc[campo])
+            if diff > TOLERANCIA_CLP:
+                difs.append(f"[{cid}] {campo}: SinSnap={vs[campo]}, ConSnap={vc[campo]}, Dif={diff}")
+                
+    # Reabrir el período para dejar la base de datos limpia
+    reabrir_periodo_contable(2026, 7, "Todas", "admin", "Limpieza post-benchmark")
+    limpiar_caches_financieros()
+    
+    if not difs:
+        print(f"\n [ÉXITO TOTAL] 0 DIFERENCIAS DETECTADAS.")
+        print(f" -> Saldo Pasivo 2026-08: ${tot_con['pasivo_total']:,.0f}")
+        print(f" -> Saldo ROU 2026-08:    ${tot_con['rou_bruto_total']:,.0f}")
+        return True
+    else:
+        print(f"\n [ALERTA] Se encontraron {len(difs)} diferencias:")
+        for d in difs[:20]:
+            print(f"   - {d}")
+        return False
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "capture":
@@ -242,5 +323,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "test-lock":
         ok = test_candados()
         sys.exit(0 if ok else 1)
+    elif len(sys.argv) > 1 and sys.argv[1] == "benchmark":
+        ok = test_benchmark_snapshots()
+        sys.exit(0 if ok else 1)
     else:
-        print("Uso: python test_cierre_validation.py [capture|verify|test-lock]")
+        print("Uso: python test_cierre_validation.py [capture|verify|test-lock|benchmark]")

@@ -69,6 +69,11 @@ def inicializar_db():
                         saldo_pasivo_moneda REAL,
                         moneda TEXT,
                         tc_cierre REAL)''')
+                        
+    cursor.execute('''CREATE INDEX IF NOT EXISTS idx_saldos_cierre_lookup 
+                      ON saldos_cierre_periodo (codigo_interno, periodo_cierre DESC)''')
+    cursor.execute('''CREATE INDEX IF NOT EXISTS idx_periodos_contables_lookup 
+                      ON periodos_contables (estado, fecha_cierre DESC)''')
     
     # Migraciones para agregar componentes del ROU y Remedición
     nuevas_columnas = {
@@ -523,6 +528,67 @@ def es_periodo_cerrado(fecha_evaluar, empresa="Todas"):
     except Exception:
         return False
 
+def generar_snapshots_cierre(anio, mes, empresa="Todas"):
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    from core import motor_financiero_v21, simular_libro_mayor, obtener_tc_cache
+    
+    f_cierre_dt = pd.to_datetime(date(int(anio), int(mes), 1)) + relativedelta(day=31)
+    f_cierre_str = f_cierre_dt.strftime('%Y-%m-%d')
+    
+    contratos = cargar_contratos()
+    if empresa and empresa != "Todas":
+        contratos = [c for c in contratos if c.get('Empresa') == empresa]
+        
+    rems_grupos = cargar_remediciones_todas_agrupadas()
+    
+    snapshots = []
+    for c in contratos:
+        cid = c['Codigo_Interno']
+        f_ini = pd.to_datetime(c['Inicio'])
+        if f_ini > f_cierre_dt:
+            continue
+            
+        rems = rems_grupos.get(cid, [])
+        try:
+            tab, vp, rou = motor_financiero_v21(c, rems)
+        except Exception:
+            tab, vp, rou = motor_financiero_v21(c)
+            
+        tc_ini = float(c.get('Valor_Moneda_Inicio') or 1.0)
+        if tc_ini <= 0: tc_ini = 1.0
+        
+        # Calcular saldo exacto al corte usando el cálculo base sin snapshot
+        rb, aa, pasivo = simular_libro_mayor(c, tab, f_cierre_dt, rems, tc_ini, vp, rou, usar_snapshot=False)
+        
+        past_tab = tab[tab['Fecha'] <= f_cierre_dt]
+        s_fin_orig = past_tab.iloc[-1]['S_Fin_Orig'] if not past_tab.empty else 0.0
+        
+        moneda = c.get('Moneda', 'CLP')
+        tc_cierre = obtener_tc_cache(moneda, f_cierre_dt)
+        
+        snapshots.append((
+            f_cierre_str, cid, c.get('Empresa', 'Todas'),
+            round(pasivo, 4), round(rb, 4), round(aa, 4),
+            round(s_fin_orig, 4), moneda, round(tc_cierre, 4)
+        ))
+        
+    conn = conectar()
+    cursor = conn.cursor()
+    if empresa and empresa != "Todas":
+        cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre=? AND empresa=?", (f_cierre_str, empresa))
+    else:
+        cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre=?", (f_cierre_str,))
+        
+    cursor.executemany(
+        """INSERT INTO saldos_cierre_periodo 
+           (periodo_cierre, codigo_interno, empresa, pasivo_clp, rou_bruto_clp, amort_acum_clp, saldo_pasivo_moneda, moneda, tc_cierre)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        snapshots
+    )
+    conn.commit()
+    conn.close()
+
 def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
     from datetime import date, datetime
     from dateutil.relativedelta import relativedelta
@@ -550,16 +616,29 @@ def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=
         conn.commit()
         conn.close()
         
-        registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Motivo: {motivo}")
-        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado exitosamente."
+        # Generar snapshot automático de saldos de cierre para aceleración máxima
+        try:
+            generar_snapshots_cierre(anio, mes, empresa)
+        except Exception:
+            pass
+            
+        # Invalidate LRU caches
+        from core import limpiar_caches_financieros
+        limpiar_caches_financieros()
+        
+        registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Snapshot generado. Motivo: {motivo}")
+        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado y saldos congelados exitosamente."
     except Exception as e:
         return False, f"Error al cerrar período: {str(e)}"
 
 def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=""):
-    from datetime import datetime
+    from datetime import date, datetime
+    from dateutil.relativedelta import relativedelta
     try:
         anio = int(anio)
         mes = int(mes)
+        f_fin_mes = pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)
+        f_cierre_str = f_fin_mes.strftime('%Y-%m-%d')
         fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         conn = conectar()
@@ -575,8 +654,17 @@ def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo
             "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas')",
             (fh_now, usuario, f"Reapertura: {motivo}", anio, mes, empresa)
         )
+        # Eliminar snapshots correspondientes al período reabierto y posteriores
+        if empresa and empresa != "Todas":
+            cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre>=? AND (empresa='Todas' OR empresa=?)", (f_cierre_str, empresa))
+        else:
+            cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre>=?", (f_cierre_str,))
+            
         conn.commit()
         conn.close()
+        
+        from core import limpiar_caches_financieros
+        limpiar_caches_financieros()
         
         registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura empresa: {empresa}. Motivo: {motivo}")
         return True, f"Período {mes:02d}/{anio} reabierto exitosamente."

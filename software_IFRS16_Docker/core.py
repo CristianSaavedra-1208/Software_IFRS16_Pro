@@ -11,12 +11,15 @@ from functools import lru_cache
 
 @lru_cache(maxsize=4096)
 def _obtener_tc_cache_interno(moneda, f_s):
+    """Lookup de TC con cache LRU. Usa query SQL directa en lugar de filtrar
+    el DataFrame completo en memoria. Logica identica: valor mas reciente
+    de 'moneda' en o antes de 'f_s'. El @lru_cache evita repetir la query SQL
+    para las mismas combinaciones (moneda, fecha) dentro de la sesion.
+    """
     if moneda == "CLP": return 1.0
-    df = obtener_df_monedas_cache()
-    if df.empty: return 0.0
     try:
-        res = df[(df['moneda'] == moneda) & (df['fecha'] <= f_s)]
-        return float(res.iloc[0]['valor']) if not res.empty else 0.0
+        from db import obtener_tc_spot
+        return obtener_tc_spot(moneda, f_s)
     except: return 0.0
 
 def obtener_tc_cache(moneda, fecha):
@@ -273,7 +276,62 @@ def to_excel_formatted(df):
                 worksheet.set_column(i, i, 20)
     return out.getvalue()
 
-def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=False):
+_SNAPSHOT_STORE = None
+
+def _cargar_snapshots_store():
+    global _SNAPSHOT_STORE
+    if _SNAPSHOT_STORE is None:
+        try:
+            from db import conectar
+            conn = conectar()
+            cur = conn.cursor()
+            cur.execute("SELECT codigo_interno, periodo_cierre, pasivo_clp, rou_bruto_clp, amort_acum_clp FROM saldos_cierre_periodo ORDER BY periodo_cierre ASC")
+            rows = cur.fetchall()
+            conn.close()
+            store = {}
+            for r in rows:
+                cid = r['codigo_interno']
+                if cid not in store:
+                    store[cid] = []
+                store[cid].append({
+                    'periodo_cierre': r['periodo_cierre'],
+                    'pasivo_clp': float(r['pasivo_clp']),
+                    'rou_bruto_clp': float(r['rou_bruto_clp']),
+                    'amort_acum_clp': float(r['amort_acum_clp'])
+                })
+            _SNAPSHOT_STORE = store
+        except Exception:
+            _SNAPSHOT_STORE = {}
+    return _SNAPSHOT_STORE
+
+def obtener_snapshot_cache(cid, f_t):
+    try:
+        f_s = pd.to_datetime(f_t).strftime('%Y-%m-%d')
+        store = _cargar_snapshots_store()
+        snaps = store.get(cid)
+        if not snaps:
+            return None
+        candidato = None
+        for s in snaps:
+            if s['periodo_cierre'] <= f_s:
+                candidato = s
+            else:
+                break
+        return candidato
+    except Exception:
+        return None
+
+def limpiar_caches_financieros():
+    global _SNAPSHOT_STORE
+    _SNAPSHOT_STORE = None
+    _obtener_tc_cache_interno.cache_clear()
+    if hasattr(st, 'cache_data'):
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+
+def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=False, usar_snapshot=True):
     from dateutil.relativedelta import relativedelta
     from datetime import date
     import pandas as pd
@@ -285,22 +343,48 @@ def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=Fal
     if past.empty:
         return 0.0, 0.0, 0.0
 
+    f_t_dt = pd.to_datetime(f_t)
     es_uf_clp = c['Moneda'] in ['UF', 'CLP']
     tc_ini = float(c.get('Valor_Moneda_Inicio') or 1.0)
     if tc_ini <= 0: tc_ini = 1.0
     
-    rou_bruto_clp = rou * tc_ini
-    pasivo_clp = vp * tc_ini
-    amort_acum_clp = 0.0
-    
-    rems_por_mes = {}
-    if rems:
-        for r in rems:
-            f_r = pd.to_datetime(r['Fecha_Remedicion'])
-            if f_r <= f_t:
-                k = (f_r.year, f_r.month)
-                if k not in rems_por_mes: rems_por_mes[k] = []
-                rems_por_mes[k].append(r)
+    snapshot_aplicado = None
+    if usar_snapshot and not ignore_baja:
+        snap = obtener_snapshot_cache(c['Codigo_Interno'], f_t_dt)
+        if snap:
+            f_snap_dt = pd.to_datetime(snap['periodo_cierre'])
+            if f_snap_dt <= f_t_dt:
+                snapshot_aplicado = snap
+
+    if snapshot_aplicado:
+        f_snap_dt = pd.to_datetime(snapshot_aplicado['periodo_cierre'])
+        pasivo_clp = float(snapshot_aplicado['pasivo_clp'])
+        rou_bruto_clp = float(snapshot_aplicado['rou_bruto_clp'])
+        amort_acum_clp = float(snapshot_aplicado['amort_acum_clp'])
+        
+        past = tab[(tab['Fecha'] > f_snap_dt) & (tab['Fecha'] <= f_t_dt)]
+        
+        rems_por_mes = {}
+        if rems:
+            for r in rems:
+                f_r = pd.to_datetime(r['Fecha_Remedicion'])
+                if f_snap_dt < f_r <= f_t_dt:
+                    k = (f_r.year, f_r.month)
+                    if k not in rems_por_mes: rems_por_mes[k] = []
+                    rems_por_mes[k].append(r)
+    else:
+        rou_bruto_clp = rou * tc_ini
+        pasivo_clp = vp * tc_ini
+        amort_acum_clp = 0.0
+        
+        rems_por_mes = {}
+        if rems:
+            for r in rems:
+                f_r = pd.to_datetime(r['Fecha_Remedicion'])
+                if f_r <= f_t_dt:
+                    k = (f_r.year, f_r.month)
+                    if k not in rems_por_mes: rems_por_mes[k] = []
+                    rems_por_mes[k].append(r)
 
     for idx, row in past.iterrows():
         f_mes = pd.to_datetime(date(row['Fecha'].year, row['Fecha'].month, 1)) + relativedelta(day=31)
@@ -364,15 +448,15 @@ def simular_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou, ignore_baja=Fal
     if not ignore_baja:
         # Ensure termination logic correctly zeroes everything
         f_fin = pd.to_datetime(c['Fin'])
-        if f_fin.year < f_t.year or (f_fin.year == f_t.year and f_fin.month <= f_t.month):
-            if not (c.get('Fecha_Baja') and c['Estado'] in ['Baja', 'Remedido'] and pd.to_datetime(c['Fecha_Baja']) > f_t):
+        if f_fin.year < f_t_dt.year or (f_fin.year == f_t_dt.year and f_fin.month <= f_t_dt.month):
+            if not (c.get('Fecha_Baja') and c['Estado'] in ['Baja', 'Remedido'] and pd.to_datetime(c['Fecha_Baja']) > f_t_dt):
                 rou_bruto_clp = 0.0
                 amort_acum_clp = 0.0
                 pasivo_clp = 0.0
                 
         if c.get('Fecha_Baja') and c['Estado'] in ['Baja', 'Remedido']:
             fb = pd.to_datetime(c['Fecha_Baja'])
-            if fb.year < f_t.year or (fb.year == f_t.year and fb.month <= f_t.month):
+            if fb.year < f_t_dt.year or (fb.year == f_t_dt.year and fb.month <= f_t_dt.month):
                 rou_bruto_clp = 0.0
                 amort_acum_clp = 0.0
                 pasivo_clp = 0.0
