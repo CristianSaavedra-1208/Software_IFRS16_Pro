@@ -58,7 +58,9 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                 elif f_baja_efectiva.year == f_t.year and f_baja_efectiva.month <= f_t.month:
                     es_baja = True
                     
-            tab, vp, rou = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
+            rems_all = rems_grupos.get(c['Codigo_Interno'], [])
+            rems = [r for r in rems_all if pd.to_datetime(r['Fecha_Remedicion']) <= f_t]
+            tab, vp, rou = obtener_motor_financiero(c, rems=rems)
             if tab.empty or 'Fecha' not in tab.columns: continue
             
             past = tab[tab['Fecha'] <= f_t]
@@ -67,7 +69,6 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
                 # Integracion con el motor central (usa cache de session_state via obtener_simulacion_libro_mayor)
                 tc_ini_hist = float(c.get('Valor_Moneda_Inicio') or 1.0)
                 if tc_ini_hist <= 0: tc_ini_hist = 1.0
-                rems = rems_grupos.get(c['Codigo_Interno'], [])
                 r_bruto, a_acum, pasivo_total_clp = obtener_simulacion_libro_mayor(c, tab, f_t, rems, tc_ini_hist, vp, rou)
                 
                 v_act = past.iloc[-1]['S_Fin_Orig']

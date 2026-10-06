@@ -200,15 +200,17 @@ def obtener_motor_financiero(c, rems=None):
         st.session_state.motor_cache = {}
     
     cid = c['Codigo_Interno']
-    hash_c = f"{c['Estado']}_{c['Canon']}_{c['Tasa']}_{c['Plazo']}_{c['Inicio']}_{c['Fin']}_{c.get('Fecha_Baja', '')}_{len(rems) if rems else 0}_v21"
+    rems_sig = "_".join([f"{r.get('Fecha_Remedicion')}:{r.get('Canon')}:{r.get('Plazo')}" for r in rems]) if rems else "0"
+    hash_c = f"{c['Estado']}_{c['Canon']}_{c['Tasa']}_{c['Plazo']}_{c['Inicio']}_{c['Fin']}_{c.get('Fecha_Baja', '')}_{rems_sig}_v21"
+    cache_key = f"{cid}_{rems_sig}"
     
-    if cid in st.session_state.motor_cache:
-        cached_hash, tab, vp, rou = st.session_state.motor_cache[cid]
+    if cache_key in st.session_state.motor_cache:
+        cached_hash, tab, vp, rou = st.session_state.motor_cache[cache_key]
         if cached_hash == hash_c:
             return tab, vp, rou
             
     tab, vp, rou = motor_financiero_v21(c, rems)
-    st.session_state.motor_cache[cid] = (hash_c, tab, vp, rou)
+    st.session_state.motor_cache[cache_key] = (hash_c, tab, vp, rou)
     return tab, vp, rou
 
 
@@ -315,7 +317,9 @@ def modulo_asientos():
             if f_fin_c.year < a or (f_fin_c.year == a and f_fin_c.month < m_idx):
                 continue
             
-            tab, vp, rou = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
+            rems_c = rems_grupos.get(c['Codigo_Interno'], [])
+            rems = [r for r in rems_c if pd.to_datetime(r['Fecha_Remedicion']) <= f_act]
+            tab, vp, rou = obtener_motor_financiero(c, rems=rems)
             if tab.empty or 'Fecha' not in tab.columns: continue
             
             # 1. Asiento de Reconocimiento Inicial
@@ -832,7 +836,9 @@ def modulo_notas():
             f_ini_c = pd.to_datetime(c['Inicio'])
             if f_act < f_ini_c.replace(day=1): continue
             
-            tab, vp, rou = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
+            rems_c = rems_grupos.get(c['Codigo_Interno'], [])
+            rems = [r for r in rems_c if pd.to_datetime(r['Fecha_Remedicion']) <= f_act]
+            tab, vp, rou = obtener_motor_financiero(c, rems=rems)
             if tab.empty or 'Fecha' not in tab.columns: continue
             tc_act = obtener_tc_cache(c['Moneda'], f_act)
             tc_ant = obtener_tc_cache(c['Moneda'], f_ant)
@@ -1040,7 +1046,8 @@ def modulo_dashboard():
                     elif f_baja_efectiva.year == a and f_baja_efectiva.month <= f_t.month:
                         es_baja_ejercicio = True # Incluir en Detalle con balances a 0 para preservar P&L
                 
-                rems = rems_grupos.get(c['Codigo_Interno'], [])
+                rems_all = rems_grupos.get(c['Codigo_Interno'], [])
+                rems = [r for r in rems_all if pd.to_datetime(r['Fecha_Remedicion']) <= f_t]
                 tab, vp, rou = obtener_motor_financiero(c, rems=rems)
                 if tab.empty or 'Fecha' not in tab.columns: continue
                 
@@ -1985,7 +1992,9 @@ def modulo_vencimientos():
                 f_baja = pd.to_datetime(c['Fecha_Baja'])
                 if f_baja <= f_t: continue
                 
-            tab, _, _ = obtener_motor_financiero(c, rems=rems_grupos.get(c['Codigo_Interno'], []))
+            rems_all = rems_grupos.get(c['Codigo_Interno'], [])
+            rems = [r for r in rems_all if pd.to_datetime(r['Fecha_Remedicion']) <= f_t]
+            tab, _, _ = obtener_motor_financiero(c, rems=rems)
             if tab.empty or 'Fecha' not in tab.columns: continue
             # Solo los flujos estrictamente futuros al cierre
             futuros = tab[tab['Fecha'] > f_t]
