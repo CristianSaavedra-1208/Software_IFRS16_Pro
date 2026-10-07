@@ -1625,14 +1625,31 @@ def modulo_contratos():
             sel = st.selectbox("Seleccione el Contrato a Modificar", list(mapa_c.keys()))
             c_sel = mapa_c[sel]
             
-            st.write(f"**Condiciones Actuales:** Canon: {c_sel['Canon']} | Tasa Anual: {c_sel['Tasa']*100:.2f}% | Plazo Actual: {c_sel['Plazo']} meses")
+            # Recuperar última condición vigente si el contrato tiene modificaciones/remediciones previas
+            from db import cargar_remediciones
+            rems_c = cargar_remediciones(c_sel['Codigo_Interno'])
+            if rems_c:
+                last_rem = rems_c[-1]
+                canon_vigente = float(last_rem['Canon'])
+                tasa_vigente_pct = float(last_rem['Tasa'] * 100)
+                fin_vigente = pd.to_datetime(last_rem['Fin'])
+                plazo_vigente = int(last_rem['Plazo'])
+                msg_rem = f" *(Última Modificación: {last_rem['Fecha_Remedicion']})*"
+            else:
+                canon_vigente = float(c_sel['Canon'])
+                tasa_vigente_pct = float(c_sel['Tasa'] * 100)
+                fin_vigente = pd.to_datetime(c_sel['Fin'])
+                plazo_vigente = int(c_sel['Plazo'])
+                msg_rem = ""
+            
+            st.write(f"**Condiciones Vigentes:** Canon: {canon_vigente:g} | Tasa Anual: {tasa_vigente_pct:.2f}% | Plazo: {plazo_vigente} meses | Fin: {fin_vigente.strftime('%Y-%m-%d')}{msg_rem}")
             
             with st.form("f_rem"):
                 st.write("Determine las nuevas condiciones de renovación o alteración del contrato.")
                 c1, c2, c3 = st.columns(3)
-                n_can = c1.number_input("Nuevo Canon", value=float(c_sel['Canon']), format="%.4f")
-                n_tas = c2.number_input("Nueva Tasa Anual %", value=float(c_sel['Tasa']*100))
-                n_fin = c3.date_input("Nueva Fecha Fin", value=pd.to_datetime(c_sel['Fin']), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
+                n_can = c1.number_input("Nuevo Canon", value=float(canon_vigente), format="%.4f")
+                n_tas = c2.number_input("Nueva Tasa Anual %", value=float(tasa_vigente_pct), format="%.2f")
+                n_fin = c3.date_input("Nueva Fecha Fin", value=fin_vigente, min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
                 
                 f_rem = st.date_input("Fecha Efectiva de Registro (Modificación)", value=date.today(), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
                 
@@ -1811,12 +1828,26 @@ def modulo_contratos():
         
         contratos_activos = [c for c in cargar_contratos() if c['Estado'] == 'Activo']
         if contratos_activos:
-            df_plantilla = pd.DataFrame(contratos_activos)
+            from db import cargar_remediciones_todas_agrupadas
+            rems_grupos_mod = cargar_remediciones_todas_agrupadas()
+            contratos_plantilla = []
+            for c in contratos_activos:
+                c_copy = dict(c)
+                rems = rems_grupos_mod.get(c['Codigo_Interno'], [])
+                if rems:
+                    last_r = rems[-1]
+                    c_copy['Canon_Actual'] = last_r['Canon']
+                    c_copy['Tasa_Actual_%'] = last_r['Tasa'] * 100
+                    c_copy['Fecha_Fin_Actual'] = last_r['Fin']
+                else:
+                    c_copy['Canon_Actual'] = c['Canon']
+                    c_copy['Tasa_Actual_%'] = c['Tasa'] * 100
+                    c_copy['Fecha_Fin_Actual'] = c['Fin']
+                contratos_plantilla.append(c_copy)
+                
+            df_plantilla = pd.DataFrame(contratos_plantilla)
             ahoy = date.today()
-            df_plantilla['Estado Vigencia'] = df_plantilla['Fin'].apply(lambda x: '🚨 Vencido' if pd.to_datetime(x).date() < ahoy else '🟢 Vigente')
-            
-            df_plantilla['Tasa_Actual_%'] = df_plantilla['Tasa'] * 100
-            df_plantilla.rename(columns={'Canon': 'Canon_Actual', 'Fin': 'Fecha_Fin_Actual'}, inplace=True)
+            df_plantilla['Estado Vigencia'] = df_plantilla['Fecha_Fin_Actual'].apply(lambda x: '🚨 Vencido' if pd.to_datetime(x).date() < ahoy else '🟢 Vigente')
             
             cols_solicitadas = ['Codigo_Interno', 'Estado Vigencia', 'Empresa', 'Clase_Activo', 'ID', 'Proveedor', 'Nombre', 'Moneda', 'Canon_Actual', 'Tasa_Actual_%', 'Fecha_Fin_Actual']
             df_plantilla = df_plantilla[cols_solicitadas]
@@ -1875,9 +1906,19 @@ def modulo_contratos():
                                             errores.append(f"Contrato {cid}: La fecha efectiva ({f_rem.date()}) no puede ser anterior al inicio ({f_i.date()}).")
                                             continue
                                             
-                                        n_can = float(r['Nuevo_Canon']) if ('Nuevo_Canon' in r and pd.notna(r.get('Nuevo_Canon'))) else float(c_sel['Canon'])
-                                        n_tas_pct = float(r['Nueva_Tasa_Anual_%']) if ('Nueva_Tasa_Anual_%' in r and pd.notna(r.get('Nueva_Tasa_Anual_%'))) else float(c_sel['Tasa']*100)
-                                        n_fin = pd.to_datetime(r['Nueva_Fecha_Fin']) if ('Nueva_Fecha_Fin' in r and pd.notna(r.get('Nueva_Fecha_Fin'))) else pd.to_datetime(c_sel['Fin'])
+                                        rems_prev = rems_grupos_mod.get(cid, [])
+                                        if rems_prev:
+                                            can_vig_bulk = float(rems_prev[-1]['Canon'])
+                                            tas_vig_bulk_pct = float(rems_prev[-1]['Tasa'] * 100)
+                                            fin_vig_bulk = pd.to_datetime(rems_prev[-1]['Fin'])
+                                        else:
+                                            can_vig_bulk = float(c_sel['Canon'])
+                                            tas_vig_bulk_pct = float(c_sel['Tasa'] * 100)
+                                            fin_vig_bulk = pd.to_datetime(c_sel['Fin'])
+                                            
+                                        n_can = float(r['Nuevo_Canon']) if ('Nuevo_Canon' in r and pd.notna(r.get('Nuevo_Canon'))) else can_vig_bulk
+                                        n_tas_pct = float(r['Nueva_Tasa_Anual_%']) if ('Nueva_Tasa_Anual_%' in r and pd.notna(r.get('Nueva_Tasa_Anual_%'))) else tas_vig_bulk_pct
+                                        n_fin = pd.to_datetime(r['Nueva_Fecha_Fin']) if ('Nueva_Fecha_Fin' in r and pd.notna(r.get('Nueva_Fecha_Fin'))) else fin_vig_bulk
                                         
                                         # Simulación de tabla histórica
                                         tab_old, vp_old, rou_old = obtener_motor_financiero(c_sel)
