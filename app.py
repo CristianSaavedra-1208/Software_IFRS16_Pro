@@ -2436,11 +2436,15 @@ def modulo_configuracion():
             st.rerun()
             
         st.write("Usuarios Actuales en Sistema:")
-        usr_dicts = obtener_usuarios() 
+        es_admin_usr = (rol_actual == 'Administrador')
+        usr_dicts = obtener_usuarios(incluir_claves=es_admin_usr) 
         usr_df = pd.DataFrame(usr_dicts)
         if not usr_df.empty:
-            usr_df.rename(columns={'usuario': 'Usuario', 'rol': 'Perfil Acceso'}, inplace=True)
-        st.dataframe(usr_df)
+            cols_rename = {'usuario': 'Usuario', 'rol': 'Perfil Acceso'}
+            if es_admin_usr and 'clave_visible' in usr_df.columns:
+                cols_rename['clave_visible'] = 'Clave Actual'
+            usr_df.rename(columns=cols_rename, inplace=True)
+        st.dataframe(usr_df, use_container_width=True)
         
         st.subheader("Eliminar Usuario")
         lista_u = usr_df["Usuario"].tolist() if not usr_df.empty else []

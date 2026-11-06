@@ -118,12 +118,24 @@ def inicializar_db():
         cursor.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT DEFAULT 'Administrador'")
     except sqlite3.OperationalError:
         pass
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN clave_visible TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+
+    # Sincronizar claves visibles conocidas si están vacías
+    cursor.execute(
+        "UPDATE usuarios SET clave_visible='Mundo16' WHERE (clave_visible IS NULL OR clave_visible='') AND password_hash='d0a77ca08a2b817665d66f07a5bf28a339e99a0ed8c2a4d309b57acfa8d7b59c'"
+    )
+    cursor.execute(
+        "UPDATE usuarios SET clave_visible='1234' WHERE (clave_visible IS NULL OR clave_visible='') AND password_hash='03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4'"
+    )
 
     # Insertar admin por defecto si no hay usuarios
     cursor.execute("SELECT count(*) as c FROM usuarios")
     if cursor.fetchone()['c'] == 0:
         h = hashlib.sha256("1234".encode()).hexdigest()
-        cursor.execute("INSERT INTO usuarios (usuario, password_hash, rol) VALUES ('admin', ?, 'Administrador')", (h,))
+        cursor.execute("INSERT INTO usuarios (usuario, password_hash, rol, clave_visible) VALUES ('admin', ?, 'Administrador', '1234')", (h,))
         
     # Inyectar Monedas Base si la tabla config_params las carece
     try:
@@ -182,25 +194,32 @@ import hashlib
 def verificar_credenciales(u, p):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT password_hash, rol FROM usuarios WHERE usuario=?", (u,))
+    cursor.execute("SELECT password_hash, rol, clave_visible FROM usuarios WHERE usuario=?", (u,))
     row = cursor.fetchone()
-    conn.close()
     if row:
         if hashlib.sha256(p.encode()).hexdigest() == row['password_hash']:
+            if not row['clave_visible']:
+                cursor.execute("UPDATE usuarios SET clave_visible=? WHERE usuario=?", (p, u))
+                conn.commit()
+            conn.close()
             # Retorna el rol o Administrador por defecto si viene nulo
             return row['rol'] if 'rol' in row.keys() and row['rol'] else 'Administrador'
+    conn.close()
     return False
 
 def agregar_usuario(u, p, rol='Lector'):
     conn = conectar()
     h = hashlib.sha256(p.encode()).hexdigest()
-    conn.execute("INSERT OR REPLACE INTO usuarios (usuario, password_hash, rol) VALUES (?,?,?)", (u, h, rol))
+    conn.execute("INSERT OR REPLACE INTO usuarios (usuario, password_hash, rol, clave_visible) VALUES (?,?,?,?)", (u, h, rol, p))
     conn.commit()
     conn.close()
 
-def obtener_usuarios():
+def obtener_usuarios(incluir_claves=False):
     conn = conectar()
-    df = pd.read_sql("SELECT usuario, rol FROM usuarios", conn)
+    if incluir_claves:
+        df = pd.read_sql("SELECT usuario, rol, clave_visible FROM usuarios", conn)
+    else:
+        df = pd.read_sql("SELECT usuario, rol FROM usuarios", conn)
     conn.close()
     return df.to_dict('records')
 
