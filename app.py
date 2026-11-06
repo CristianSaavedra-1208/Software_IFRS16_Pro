@@ -2431,9 +2431,12 @@ def modulo_configuracion():
         n_pass = c1.text_input("Contraseña", type="password")
         n_rol = c1.selectbox("Rol Estricto de Acceso", ["Administrador", "Analista Financiero (Editor)", "Auditor Ext. / Gerencia (Lector)", "Ingeniero IT (Técnico)"])
         if c1.button("Crear/Actualizar Usuario"):
-            agregar_usuario(n_user, n_pass, n_rol)
-            st.session_state.success_msg = f"Usuario {n_user} habilitado como {n_rol}."
-            st.rerun()
+            if n_user.strip() == "" or n_pass == "":
+                st.error("Debe ingresar un nombre de usuario y una contraseña.")
+            else:
+                agregar_usuario(n_user.strip(), n_pass, n_rol)
+                st.session_state.success_msg = f"Usuario {n_user.strip()} habilitado como {n_rol}."
+                st.rerun()
             
         st.write("Usuarios Actuales en Sistema:")
         es_admin_usr = (rol_actual == 'Administrador')
