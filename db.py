@@ -74,6 +74,17 @@ def inicializar_db():
                       ON saldos_cierre_periodo (codigo_interno, periodo_cierre DESC)''')
     cursor.execute('''CREATE INDEX IF NOT EXISTS idx_periodos_contables_lookup 
                       ON periodos_contables (estado, fecha_cierre DESC)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS storage_reportes_periodo (
+                        periodo_cierre TEXT,
+                        anio INTEGER,
+                        mes INTEGER,
+                        empresa TEXT,
+                        modulo TEXT,
+                        payload_json TEXT,
+                        fecha_guardado TEXT,
+                        PRIMARY KEY (periodo_cierre, empresa, modulo))''')
+    cursor.execute('''CREATE INDEX IF NOT EXISTS idx_storage_reportes_lookup 
+                      ON storage_reportes_periodo (anio, mes, empresa, modulo)''')
     
     # Migraciones para agregar componentes del ROU y Remedición
     nuevas_columnas = {
@@ -528,6 +539,120 @@ def es_periodo_cerrado(fecha_evaluar, empresa="Todas"):
     except Exception:
         return False
 
+def obtener_info_cierre_mes(anio, mes, empresa="Todas"):
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        anio = int(anio)
+        mes = int(mes)
+        f_cierre_str = (pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)).strftime('%Y-%m-%d')
+        if empresa and empresa != "Todas":
+            cursor.execute(
+                "SELECT * FROM periodos_contables WHERE estado='Cerrado' AND anio=? AND mes=? AND (empresa='Todas' OR empresa=?) ORDER BY id DESC LIMIT 1",
+                (anio, mes, empresa)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM periodos_contables WHERE estado='Cerrado' AND anio=? AND mes=? ORDER BY id DESC LIMIT 1",
+                (anio, mes)
+            )
+        row = cursor.fetchone()
+        if row:
+            res = dict(row)
+            conn.close()
+            return res
+        # Fallback: si existe un período posterior cerrado que cubre esta fecha
+        if empresa and empresa != "Todas":
+            cursor.execute(
+                "SELECT * FROM periodos_contables WHERE estado='Cerrado' AND fecha_cierre>=? AND (empresa='Todas' OR empresa=?) ORDER BY fecha_cierre DESC LIMIT 1",
+                (f_cierre_str, empresa)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM periodos_contables WHERE estado='Cerrado' AND fecha_cierre>=? ORDER BY fecha_cierre DESC LIMIT 1",
+                (f_cierre_str,)
+            )
+        row2 = cursor.fetchone()
+        conn.close()
+        return dict(row2) if row2 else None
+    except Exception:
+        conn.close()
+        return None
+
+def es_mes_cerrado(anio, mes, empresa="Todas"):
+    return obtener_info_cierre_mes(anio, mes, empresa) is not None
+
+def guardar_reporte_storage(anio, mes, empresa, modulo, payload_obj):
+    import zlib
+    from datetime import date, datetime
+    from dateutil.relativedelta import relativedelta
+    anio = int(anio)
+    mes = int(mes)
+    f_cierre_str = (pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)).strftime('%Y-%m-%d')
+    fh_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload_str = json.dumps(payload_obj, default=str, ensure_ascii=False)
+    payload_compressed = sqlite3.Binary(zlib.compress(payload_str.encode('utf-8'), level=9))
+    conn = conectar()
+    conn.execute(
+        """INSERT OR REPLACE INTO storage_reportes_periodo
+           (periodo_cierre, anio, mes, empresa, modulo, payload_json, fecha_guardado)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (f_cierre_str, anio, mes, empresa, modulo, payload_compressed, fh_now)
+    )
+    conn.commit()
+    conn.close()
+
+def _decodificar_payload_storage(raw_val):
+    import zlib
+    if raw_val is None:
+        return None
+    if isinstance(raw_val, (bytes, bytearray, memoryview)):
+        return json.loads(zlib.decompress(bytes(raw_val)).decode('utf-8'))
+    return json.loads(raw_val)
+
+def obtener_reporte_storage(anio, mes, empresa, modulo):
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    anio = int(anio)
+    mes = int(mes)
+    f_cierre_str = (pd.to_datetime(date(anio, mes, 1)) + relativedelta(day=31)).strftime('%Y-%m-%d')
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT payload_json, fecha_guardado FROM storage_reportes_periodo WHERE periodo_cierre=? AND empresa=? AND modulo=?",
+            (f_cierre_str, empresa, modulo)
+        )
+        row = cursor.fetchone()
+        if row and row['payload_json'] is not None:
+            conn.close()
+            return _decodificar_payload_storage(row['payload_json'])
+        # Fallback instantáneo: si se consulta una empresa específica y está guardado el consolidado 'Todas'
+        if empresa and empresa != "Todas" and modulo != "ASIENTOS":
+            cursor.execute(
+                "SELECT payload_json FROM storage_reportes_periodo WHERE periodo_cierre=? AND empresa='Todas' AND modulo=?",
+                (f_cierre_str, modulo)
+            )
+            row_all = cursor.fetchone()
+            conn.close()
+            if row_all and row_all['payload_json'] is not None:
+                data_all = _decodificar_payload_storage(row_all['payload_json'])
+                if modulo == "NOTAS_MOVIMIENTO" and isinstance(data_all, dict):
+                    return {
+                        "roll_pasivo": [r for r in data_all.get("roll_pasivo", []) if r.get("Empresa") == empresa],
+                        "roll_activo": [r for r in data_all.get("roll_activo", []) if r.get("Empresa") == empresa]
+                    }
+                elif isinstance(data_all, list):
+                    return [r for r in data_all if r.get("Empresa") == empresa]
+            return None
+        conn.close()
+        return None
+    except Exception:
+        conn.close()
+        return None
+
 def generar_snapshots_cierre(anio, mes, empresa="Todas"):
     from datetime import date
     from dateutil.relativedelta import relativedelta
@@ -549,7 +674,8 @@ def generar_snapshots_cierre(anio, mes, empresa="Todas"):
         if f_ini > f_cierre_dt:
             continue
             
-        rems = rems_grupos.get(cid, [])
+        rems_all = rems_grupos.get(cid, [])
+        rems = [r for r in rems_all if pd.to_datetime(r['Fecha_Remedicion']) <= f_cierre_dt]
         try:
             tab, vp, rou = core.motor_financiero_v21(c, rems)
         except Exception:
@@ -558,10 +684,10 @@ def generar_snapshots_cierre(anio, mes, empresa="Todas"):
         tc_ini = float(c.get('Valor_Moneda_Inicio') or 1.0)
         if tc_ini <= 0: tc_ini = 1.0
         
-        # Calcular saldo exacto al corte usando el cálculo base sin snapshot
-        rb, aa, pasivo = core.simular_libro_mayor(c, tab, f_cierre_dt, rems, tc_ini, vp, rou, usar_snapshot=False)
+        # Calcular saldo exacto al corte
+        rb, aa, pasivo = core.simular_libro_mayor(c, tab, f_cierre_dt, rems, tc_ini, vp, rou, usar_snapshot=True)
         
-        past_tab = tab[tab['Fecha'] <= f_cierre_dt]
+        past_tab = tab[tab['Fecha'] <= f_cierre_dt] if (tab is not None and not tab.empty and 'Fecha' in tab.columns) else pd.DataFrame()
         s_fin_orig = past_tab.iloc[-1]['S_Fin_Orig'] if not past_tab.empty else 0.0
         
         moneda = c.get('Moneda', 'CLP')
@@ -569,8 +695,8 @@ def generar_snapshots_cierre(anio, mes, empresa="Todas"):
         
         snapshots.append((
             f_cierre_str, cid, c.get('Empresa', 'Todas'),
-            round(pasivo, 4), round(rb, 4), round(aa, 4),
-            round(s_fin_orig, 4), moneda, round(tc_cierre, 4)
+            float(pasivo), float(rb), float(aa),
+            float(s_fin_orig), moneda, float(tc_cierre)
         ))
         
     conn = conectar()
@@ -609,6 +735,9 @@ def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=
             conn.close()
             return False, f"El período {mes:02d}/{anio} para la empresa '{empresa}' ya se encuentra cerrado."
             
+        # Limpiar registros previos 'Abierto' del mismo mes/empresa para evitar duplicados en el historial activo
+        cursor.execute("DELETE FROM periodos_contables WHERE anio=? AND mes=? AND empresa=? AND estado='Abierto'", (anio, mes, empresa))
+        
         cursor.execute(
             "INSERT INTO periodos_contables (empresa, anio, mes, fecha_cierre, estado, cerrado_por, fecha_accion, motivo) VALUES (?, ?, ?, ?, 'Cerrado', ?, ?, ?)",
             (empresa, anio, mes, f_cierre_str, usuario, fh_now, motivo)
@@ -631,7 +760,7 @@ def cerrar_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo=
             pass
         
         registrar_log(usuario, "CIERRE_PERIODO", f"{anio}-{mes:02d}", f"Cierre contable empresa: {empresa}. Snapshot generado. Motivo: {motivo}")
-        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado y saldos congelados exitosamente."
+        return True, f"Período {mes:02d}/{anio} ({f_cierre_str}) cerrado y saldos congelados en Storage exitosamente."
     except Exception as e:
         return False, f"Error al cerrar período: {str(e)}"
 
@@ -648,21 +777,38 @@ def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo
         conn = conectar()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT id FROM periodos_contables WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas') AND estado='Cerrado'", (anio, mes, empresa))
+        # Buscar el período solicitado y cualquier período posterior cerrado (reapertura en cascada)
+        if empresa and empresa != "Todas":
+            cursor.execute(
+                "SELECT id, anio, mes, fecha_cierre FROM periodos_contables WHERE fecha_cierre>=? AND (empresa=? OR empresa='Todas') AND estado='Cerrado' ORDER BY fecha_cierre ASC",
+                (f_cierre_str, empresa)
+            )
+        else:
+            cursor.execute(
+                "SELECT id, anio, mes, fecha_cierre FROM periodos_contables WHERE fecha_cierre>=? AND estado='Cerrado' ORDER BY fecha_cierre ASC",
+                (f_cierre_str,)
+            )
         rows = cursor.fetchall()
         if not rows:
             conn.close()
-            return False, f"No se encontró un período cerrado para {mes:02d}/{anio} ({empresa})."
+            return False, f"No se encontró un período cerrado en o desde {mes:02d}/{anio} ({empresa})."
             
-        cursor.execute(
-            "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE anio=? AND mes=? AND (empresa=? OR empresa='Todas')",
-            (fh_now, usuario, f"Reapertura: {motivo}", anio, mes, empresa)
-        )
-        # Eliminar snapshots correspondientes al período reabierto y posteriores
+        periodos_reabiertos = [f"{r['mes']:02d}/{r['anio']}" for r in rows]
+        
         if empresa and empresa != "Todas":
+            cursor.execute(
+                "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE fecha_cierre>=? AND (empresa=? OR empresa='Todas') AND estado='Cerrado'",
+                (fh_now, usuario, f"Reapertura (desde {mes:02d}/{anio}): {motivo}", f_cierre_str, empresa)
+            )
             cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre>=? AND (empresa='Todas' OR empresa=?)", (f_cierre_str, empresa))
+            cursor.execute("DELETE FROM storage_reportes_periodo WHERE periodo_cierre>=? AND (empresa='Todas' OR empresa=?)", (f_cierre_str, empresa))
         else:
+            cursor.execute(
+                "UPDATE periodos_contables SET estado='Abierto', fecha_accion=?, cerrado_por=?, motivo=? WHERE fecha_cierre>=? AND estado='Cerrado'",
+                (fh_now, usuario, f"Reapertura (desde {mes:02d}/{anio}): {motivo}", f_cierre_str)
+            )
             cursor.execute("DELETE FROM saldos_cierre_periodo WHERE periodo_cierre>=?", (f_cierre_str,))
+            cursor.execute("DELETE FROM storage_reportes_periodo WHERE periodo_cierre>=?", (f_cierre_str,))
             
         conn.commit()
         conn.close()
@@ -674,8 +820,9 @@ def reabrir_periodo_contable(anio, mes, empresa="Todas", usuario="admin", motivo
         except Exception:
             pass
         
-        registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura empresa: {empresa}. Motivo: {motivo}")
-        return True, f"Período {mes:02d}/{anio} reabierto exitosamente."
+        resumen_per = ", ".join(periodos_reabiertos)
+        registrar_log(usuario, "REAPERTURA_PERIODO", f"{anio}-{mes:02d}", f"Reapertura en cascada ({resumen_per}) empresa: {empresa}. Motivo: {motivo}")
+        return True, f"Período(s) {resumen_per} reabierto(s) exitosamente y Storage liberado desde {f_cierre_str}."
     except Exception as e:
         return False, f"Error al reabrir período: {str(e)}"
 

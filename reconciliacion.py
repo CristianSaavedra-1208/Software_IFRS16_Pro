@@ -28,9 +28,32 @@ def generar_reconciliacion_rollforward(empresa_sel, a, mes_fin_nom, lista_c, rem
         f_t = pd.to_datetime(date(a, i, 1)) + relativedelta(day=31)
         fechas_corte.append((f'Saldos {MESES_LISTA[i-1]} {a}', f_t))
         
+    from db import es_mes_cerrado, obtener_reporte_storage
     resultados_fotos = []
     
     for nombre_mes, f_t in fechas_corte:
+        # Fast-path: si el mes de corte está cerrado y tiene Storage Oficial de DASHBOARD_SALDOS, leer directo sin recalcular
+        if es_mes_cerrado(f_t.year, f_t.month, empresa_sel):
+            stored_dash = obtener_reporte_storage(f_t.year, f_t.month, empresa_sel, "DASHBOARD_SALDOS")
+            if stored_dash is not None:
+                if empresa_sel != "Todas":
+                    stored_dash = [r for r in stored_dash if r.get('Empresa') == empresa_sel]
+                rou_bruto_tot = sum(float(r.get('ROU Bruto', 0.0)) for r in stored_dash)
+                amort_acum_tot = sum(float(r.get('Amort. Acum', 0.0)) for r in stored_dash)
+                pasivo_tot = sum(float(r.get('Pasivo Total', 0.0)) for r in stored_dash)
+                pasivo_corr_tot = sum(float(r.get('Pasivo Corriente', 0.0)) for r in stored_dash)
+                pasivo_nocorr_tot = sum(float(r.get('Pasivo No Corr', 0.0)) for r in stored_dash)
+                resultados_fotos.append({
+                    'Periodo': nombre_mes,
+                    'ROU Bruto': rou_bruto_tot,
+                    'Amortizacion Acumulada': amort_acum_tot,
+                    'Rou Neto': rou_bruto_tot - amort_acum_tot,
+                    'Pasivo total': pasivo_tot,
+                    'Pasivo Corriente': pasivo_corr_tot,
+                    'Pasivo no corriente': pasivo_nocorr_tot
+                })
+                continue
+
         rou_bruto_tot = 0
         amort_acum_tot = 0
         pasivo_tot = 0
